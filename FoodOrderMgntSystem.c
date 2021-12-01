@@ -2,8 +2,12 @@
 #include <stdlib.h>
 #include <stdint.h>
 #include <stdbool.h>
+#include <string.h>
+#include <stdarg.h>
 
-#define PRINT_LOG true
+#define print if(DEBUG)printf
+
+bool DEBUG = false;
 
 // define a link list
 
@@ -21,7 +25,7 @@ typedef struct {
 } list;
 
 
-node * list_get_node(list * self, int64_t index){
+node * list_get_node(list * self, size_t index){
     if (index == 0){
         return self->first_node;
     }
@@ -42,7 +46,7 @@ node * list_get_node(list * self, int64_t index){
         self->last_visit_node = self->last_visit_node->next_node;
     }
     self->last_visit_node_index = index;
-    printf("--list_get index: %li, node: %p\n\n", index, self->last_visit_node);
+    print("--list_get index: %li, node: %p\n\n", index, self->last_visit_node);
     return self->last_visit_node;
 }
 
@@ -68,23 +72,30 @@ void list_append_int(list * self, int64_t newval){
     list_append(self, tmp.void_s);
 }
 
-void list_pop(list * self, size_t index){
-    node * this_node = list_get_node(self, index);
-    node * next_node = this_node->next_node;
+void list_pop_node(list * self, node * pop_node){
+    node * next_node = pop_node->next_node;
+    void * tmp_val = pop_node->value;
 
-    void * tmp_val = this_node->value;
-    this_node->value = next_node->value;
+    pop_node->value = next_node->value;
     next_node->value = tmp_val;
 
-    this_node->next_node = next_node->next_node;
-    free(next_node);
-    
-    if (index == self->len - 1){
-        self->last_node = this_node;
-    }
+    pop_node->next_node = next_node->next_node;
 
-    printf("--list_pop this node: %p, deleted node: %p, next node addr: %p\n\n", this_node, next_node, this_node->next_node);
+    if (next_node == self->last_node){
+        self->last_node = pop_node;
+    }
     self->len -= 1;
+    self->last_visit_node = self->first_node;
+    self->last_visit_node_index = 0;
+    free(next_node);
+
+    print("--list_pop this node: %p, deleted node: %p, next node addr: %p\n\n", pop_node, next_node,
+           pop_node->next_node);
+
+}
+
+void list_pop(list * self, size_t index){
+    list_pop_node(self, list_get_node(self, index));
 }
 
 list * new_list(void){
@@ -131,17 +142,20 @@ char * list_to_str(list * self){
 }
 
 void list_print_str(list * self){
-    printf("--list len: %li, first node: %p, last node %p\n", self->len, self->first_node, self->last_node);
-    printf("--last visit node index: %li last visit node: %p\n", self->last_visit_node_index, self->last_visit_node);
-    node * this_node = self->first_node;
-    for (size_t i = 0; i <= self->len; i++){
-        printf("node: %li, ", i);
-        printf("addr: %p, ", this_node);
-        printf("next addr: %p, ", this_node->next_node);
-        printf("value: \"%s\"\n", (char *)this_node->value);
-        this_node = this_node->next_node;
+    if (DEBUG){
+        printf("--list len: %li, first node: %p, last node %p\n", self->len, self->first_node, self->last_node);
+        printf("--last visit node index: %li last visit node: %p\n", self->last_visit_node_index,
+               self->last_visit_node);
+        node *this_node = self->first_node;
+        for (size_t i = 0; i < self->len; i++) {
+            printf("node: %li, ", i);
+            printf("addr: %p, ", this_node);
+            printf("next addr: %p, ", this_node->next_node);
+            printf("value: \"%s\"\n", (char *) this_node->value);
+            this_node = this_node->next_node;
+        }
+        printf("\n");
     }
-    printf("\n");
 }
 
 char * get_input(void){
@@ -165,12 +179,6 @@ char * get_input(void){
 #define CSV_STRING_ 3
 
 typedef struct{
-    list * name;
-    size_t length;
-    void * table_content;
-} csv_table;
-
-typedef struct{
     char var_type;
     union{
         int64_t int_;
@@ -179,61 +187,135 @@ typedef struct{
         } value;
 } csv_element;
 
-void not_use(void){}
-
 
 list * split_csv_line(char * line, size_t len){
+    // input: "hi, 33.3"
+    // return: [['h', 'i'], ['3', '3', '.', '3']]
+
     list * result_list = new_list();
     list * buf = new_list();
+
+    bool is_str = false;
 
     for (size_t i = 0; i < len ; i++){
         if (line[i] == '\n'){
             continue;
-        }  
-        if (line[i] == ','){
-            list_append(result_list, list_to_str(buf)); // TODO: place buf directly into the linked list
-            list_free(buf);
+        }
+        if (line[i] == ' ' && !is_str){
+            continue;
+        }
+        if (line[i] == '"'){
+            is_str = ! is_str;
+        }
+        if (line[i] == ',' && (! is_str)){
+            list_append(result_list, buf);
             buf = new_list();
         }
         else{
             list_append_int(buf, line[i]);
         }
     }
-    list_append(result_list, list_to_str(buf));
-    list_free(buf);
+    if (buf->len > 0){
+        list_append(result_list, buf);
+    }
+    else{
+        free(buf);
+    }
     return result_list;
 }
 
-list * parse_csv_line(list * line){
-    node * current_node;
-    char * str_value;
-    for (size_t i = 0; i < line->len; i++){
-        current_node = list_get_node(line, i);
-        str_value = current_node->value;
+csv_element * parse_csv_element(list * element){
+    // input: ['3', '3', '.', '3']
+    // return csv_element{var_type = CSV_FLOAT_, value = 33.3}
+
+    char * element_str = list_to_str(element);
+    char * endptr;
+
+    csv_element * current_element = malloc(sizeof(csv_element));
+
+    current_element->value.int_ = strtoll(element_str, &endptr, 10);
+    if (endptr[0] == '\0'){
+        current_element->var_type = CSV_INT_;
     }
+
+    current_element->value.float_ = strtod(element_str, &endptr);
+    if (endptr[0] == '\0'){
+        current_element->var_type = CSV_FLOAT_;
+    }
+
+    else {
+        // it is a str
+        node *last_node;
+        // removing str at the first and the end
+        if ((uintptr_t) list_get_node(element, 0)->value == '"' &&
+            (uintptr_t) (last_node = list_get_node(element, element->len - 1)) == '"') {
+            list_pop(element, 0);
+            list_pop_node(element, last_node);
+        }
+        // parse "" as "
+        node *current_node;
+        bool is_quote = false;
+        int element_char;
+        for (size_t i = 0; i < element->len; i++) {
+            current_node = list_get_node(element, i);
+            element_char = (int) (uint64_t) current_node->value;
+            if (element_char == '"') {
+                if (is_quote) {
+                    list_pop_node(element, current_node);
+                    element->last_visit_node = last_node;
+                    element->last_visit_node_index = i - 1;
+                } else {
+                    last_node = current_node;
+                }
+                is_quote = !is_quote;
+            }
+        }
+        current_element->value.string_ = list_to_str(element);
+        current_element->var_type = CSV_STRING_;
+    }
+    free(element);
+    return current_element;
 }
 
+list * parse_csv_line(char * line, size_t size){
+    list * list_line = split_csv_line(line, size);
+    list * list_result = new_list();
+    list * list_element;
+    for (int i = 0; i < list_line->len; i++){
+        list_element = list_get_node(list_line, i)->value;
+        list_append(list_result, parse_csv_element(list_element));
+    }
+    return list_result;
+}
+
+list * open_csv(char * file){
+    FILE * file_handle = NULL;
+    file_handle = fopen(file, "r");
+
+    fclose(file_handle);
+}
+
+
 int main(void){
-    // list * my_list = split_csv_line("hello,hi,12234455,\"33.3\"", 36);
-    // for (int i = 0; i < my_list->len; i++){
-    //     printf("%s ", list_get_node(my_list, i)->value);
-    // }
+    open_csv("test.csv");
 
-    list * x = new_list();
+//    list * my_list = parse_csv_line("\"hell,o\",hi,12234455,\"33.3\"", 36);
+//
+//    list * x = new_list();
+//
+//    list_append(x, "hello");
+//    list_append(x, "hi");
+//    list_append(x, "world");
+//    list_append(x, "world2");
+//    list_append(x, "world3");
+//    list_append(x, "world4");
+//    list_append(x, "world5");
+//    list_append(x, "world6");
+//    list_append(x, "world7");
 
-    list_append(x, "hello");
-    list_append(x, "hi");
-    list_append(x, "world");
-    list_append(x, "world2");
-    list_append(x, "world3");
-    list_append(x, "world4");
-    list_append(x, "world5");
-    list_append(x, "world6");
-    list_append(x, "world7");
-
-    list_print_str(x);
-    list_pop(x, x->len - 1);
-    list_pop(x, 3);
-    list_print_str(x);
+//    list_print_str(x);
+//    list_pop(x, x->len - 1);
+//    list_pop(x, 3);
+//    list_print_str(x);
 
 }
