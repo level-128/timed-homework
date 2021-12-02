@@ -4,6 +4,7 @@
 #include <stdbool.h>
 #include <string.h>
 #include <stdarg.h>
+#include <sys/mman.h>
 
 #define print if(DEBUG)printf
 
@@ -46,7 +47,7 @@ node * list_get_node(list * self, size_t index){
         self->last_visit_node = self->last_visit_node->next_node;
     }
     self->last_visit_node_index = index;
-    print("--list_get index: %li, node: %p\n\n", index, self->last_visit_node);
+    print("--list_get index: %zu, node: %p\n\n", index, self->last_visit_node);
     return self->last_visit_node;
 }
 
@@ -143,12 +144,12 @@ char * list_to_str(list * self){
 
 void list_print_str(list * self){
     if (DEBUG){
-        printf("--list len: %li, first node: %p, last node %p\n", self->len, self->first_node, self->last_node);
-        printf("--last visit node index: %li last visit node: %p\n", self->last_visit_node_index,
+        printf("--list len: %zu, first node: %p, last node %p\n", self->len, self->first_node, self->last_node);
+        printf("--last visit node index: %zu last visit node: %p\n", self->last_visit_node_index,
                self->last_visit_node);
         node *this_node = self->first_node;
         for (size_t i = 0; i < self->len; i++) {
-            printf("node: %li, ", i);
+            printf("node: %zu, ", i);
             printf("addr: %p, ", this_node);
             printf("next addr: %p, ", this_node->next_node);
             printf("value: \"%s\"\n", (char *) this_node->value);
@@ -289,10 +290,7 @@ list * parse_csv_line(char * line, size_t size){
 }
 
 list * open_csv(char * file){
-    FILE * file_handle = NULL;
-    file_handle = fopen(file, "r");
 
-    fclose(file_handle);
 }
 
 
