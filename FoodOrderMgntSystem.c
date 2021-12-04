@@ -3,8 +3,9 @@
 #include <stdint.h>
 #include <stdbool.h>
 #include <string.h>
-#include <stdarg.h>
 #include <sys/mman.h>
+#include <sys/stat.h>
+#include <fcntl.h>
 
 #define print if(DEBUG)printf
 #define REHASH_LIMIT 0.7
@@ -169,7 +170,6 @@ void dict_del(dict * self, char * key) {
 }
 
 
-
 // define a link list
 
 typedef struct node {
@@ -193,7 +193,7 @@ node * list_get_node(list * self, size_t index){
     if (index >= self->len || index < 0){
         return NULL;
     }
-    
+
     size_t start_index;
     if (index >= self->last_visit_node_index){
         start_index = self->last_visit_node_index;
@@ -302,7 +302,8 @@ char * list_to_str(list * self){
     return my_str;
 }
 
-void list_print_str(list * self){
+void __attribute__((unused)) list_print_str(list * self){
+    // this function is used for debug only.
     if (DEBUG){
         printf("--list len: %zu, first node: %p, last node %p\n", self->len, self->first_node, self->last_node);
         printf("--last visit node index: %zu last visit node: %p\n", self->last_visit_node_index,
@@ -349,30 +350,57 @@ typedef struct{
 } csv_element;
 
 
-list * split_csv_line(char * line, size_t len){
+void print_csv_element(csv_element * element_){
+    char * name[] = {"number", "decimal", "string"};
+    printf("%s: ", name[element_->var_type - 1]);
+    if (element_->var_type == CSV_FLOAT_){
+        printf("%lf", element_->value.float_);
+    }
+    else if (element_->var_type == CSV_INT_){
+        printf("%li", element_->value.int_);
+    }
+    else{
+        printf("%s", element_->value.string_);
+    }
+}
+
+list * split_csv_line(char * line, char ** buf_con){
     // input: "hi, 33.3"
     // return: [['h', 'i'], ['3', '3', '.', '3']]
 
     list * result_list = new_list();
     list * buf = new_list();
 
-    bool is_str = false;
+    bool is_quote = false;
+    bool is_start_element = false;
 
-    for (size_t i = 0; i < len ; i++){
-        if (line[i] == '\n'){
+    size_t i = 0;
+    for (; ; i++){
+
+        if (line[i] == '\n' && !is_quote){
+            i += 1;
+            break;
+        }
+        if (line[i] == '\0'){
+            break;
+        }
+        if (line[i] == ' ' && !is_start_element){
             continue;
         }
-        if (line[i] == ' ' && !is_str){
+        if (line[i] < 0){
             continue;
         }
         if (line[i] == '"'){
-            is_str = ! is_str;
+            is_quote = ! is_quote;
+            is_start_element = true;
         }
-        if (line[i] == ',' && (! is_str)){
+        if (line[i] == ',' && (! is_quote)){
             list_append(result_list, buf);
             buf = new_list();
+            is_start_element = false;
         }
         else{
+            is_start_element = true;
             list_append_int(buf, line[i]);
         }
     }
@@ -382,6 +410,7 @@ list * split_csv_line(char * line, size_t len){
     else{
         free(buf);
     }
+    *buf_con = line + i;
     return result_list;
 }
 
@@ -390,7 +419,7 @@ csv_element * parse_csv_element(list * element){
     // return csv_element{var_type = CSV_FLOAT_, value = 33.3}
 
     char * element_str = list_to_str(element);
-    char * endptr;
+    char * endptr = NULL;
 
     csv_element * current_element = malloc(sizeof(csv_element));
 
@@ -430,6 +459,9 @@ csv_element * parse_csv_element(list * element){
                 }
                 is_quote = !is_quote;
             }
+            else{
+                is_quote = false;
+            }
         }
         current_element->value.string_ = list_to_str(element);
         current_element->var_type = CSV_STRING_;
@@ -438,10 +470,11 @@ csv_element * parse_csv_element(list * element){
     return current_element;
 }
 
-list * parse_csv_line(char * line){
-    list * list_line = split_csv_line(line, size);
+list * parse_csv_line(char * line, char ** buf_con){
+    list * list_line = split_csv_line(line, buf_con);
     list * list_result = new_list();
     list * list_element;
+
     for (int i = 0; i < list_line->len; i++){
         list_element = list_get_node(list_line, i)->value;
         list_append(list_result, parse_csv_element(list_element));
@@ -449,13 +482,43 @@ list * parse_csv_line(char * line){
     return list_result;
 }
 
-list * open_csv(char * file){
-
+char * _open_csv(char * file_name){
+    struct stat stat_;
+    int file_handle = open(file_name, O_RDWR);
+    if (file_handle == 0){
+        printf("csv load failed, program terminated.");
+        exit(1);
+    }
+    if (stat(file_name, &stat_) != 0){
+        printf("can't determine file's size. Program terminated.");
+        exit(1);
+    }
+    char * file_ptr = mmap(NULL,stat_.st_size,
+                        PROT_READ|PROT_WRITE,MAP_SHARED,
+                        file_handle ,0);
+    return file_ptr;
 }
 
+list * load_csv(char * file_name){
+    char * csv_file = _open_csv(file_name);
+    char * buf_con = csv_file;
+    list * csv_list = new_list();
+
+    while (true){
+        list_append(csv_list, parse_csv_line(buf_con, &buf_con));
+        if(buf_con[0] == '\0'){
+            break;
+        }
+    }
+    return csv_list;
+}
 
 int main(void){
-    open_csv("test.csv");
+    list * my_list;
+    my_list = load_csv("Book1.csv");
+
+    int element[2] = {1, 2};
+    print_csv_element(list_get_node(list_get_node(my_list, element[0])->value, element[1])->value);
 
 //    list * my_list = parse_csv_line("\"hell,o\",hi,12234455,\"33.3\"", 36);
 //
