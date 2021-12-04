@@ -38,6 +38,7 @@ typedef struct{
     dict_chunk * dict_value;
 } dict;
 
+void dict_store(dict *, char *, void *);
 
 uint32_t hash(const char * key, uint32_t seed){
    uint64_t result = 0;
@@ -51,9 +52,6 @@ uint32_t hash(const char * key, uint32_t seed){
    return (result % 0xFFFFFFFF) ^ seed;
 }
 
-//uint32_t hash(const char* key, uint32_t seed){
-//   return atoi(key);
-//}
 
 dict * new_dict(size_t size){
    if (! size){
