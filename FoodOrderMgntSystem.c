@@ -387,7 +387,7 @@ list * split_csv_line(char * line, char ** buf_con){
         if (line[i] == ' ' && !is_start_element){
             continue;
         }
-        if (line[i] < 0){
+        if (line[i] < 0 || line[i] == '\r'){
             continue;
         }
         if (line[i] == '"'){
@@ -437,10 +437,11 @@ csv_element * parse_csv_element(list * element){
         // it is a str
         node *last_node;
         // removing str at the first and the end
-        if ((uintptr_t) list_get_node(element, 0)->value == '"' &&
-            (uintptr_t) (last_node = list_get_node(element, element->len - 1)) == '"') {
+
+        if (element_str[0] == '"' &&
+            element_str[element->len - 1] == '"') {
             list_pop(element, 0);
-            list_pop_node(element, last_node);
+            list_pop(element, element->len - 1);
         }
         // parse "" as "
         node *current_node;
@@ -485,7 +486,7 @@ list * parse_csv_line(char * line, char ** buf_con){
 char * _open_csv(char * file_name){
     struct stat stat_;
     int file_handle = open(file_name, O_RDWR);
-    if (file_handle == 0){
+    if (file_handle < 0){
         printf("csv load failed, program terminated.");
         exit(1);
     }
@@ -515,7 +516,7 @@ list * load_csv(char * file_name){
 
 int main(void){
     list * my_list;
-    my_list = load_csv("Book1.csv");
+    my_list = load_csv("test.csv");
 
     int element[2] = {1, 2};
     print_csv_element(list_get_node(list_get_node(my_list, element[0])->value, element[1])->value);
