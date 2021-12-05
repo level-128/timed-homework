@@ -3,6 +3,7 @@
 #include <stdint.h>
 #include <stdbool.h>
 #include <string.h>
+#include <stdarg.h>
 #include <sys/mman.h>
 #include <sys/stat.h>
 #include <fcntl.h>
@@ -120,9 +121,7 @@ void dict_store(dict * self, char * key, void * value){
    self->content_count += 1;
 }
 
-
-
-dict_chunk * _dict_find_trunk(dict * self, char * key) {
+dict_chunk * p__dict_find_trunk(dict * self, char * key) {
    uint32_t hash_value = hash(key, self->rand_salt);
    uint32_t location = hash_value % self->size;
    dict_chunk *self_trunk = self->dict_value + location;
@@ -151,7 +150,7 @@ dict_chunk * _dict_find_trunk(dict * self, char * key) {
 }
 
 void * dict_find(dict * self, char * key) {
-   dict_chunk * tmp = _dict_find_trunk(self, key);
+   dict_chunk * tmp = p__dict_find_trunk(self, key);
    if (tmp){
       return tmp->ptr_value;
    }
@@ -164,9 +163,19 @@ void dict_del(dict * self, char * key) {
       dict_remap(self, self->size / 1.5);
    }
 
-   dict_chunk *self_trunk = _dict_find_trunk(self, key);
+   dict_chunk *self_trunk = p__dict_find_trunk(self, key);
    memset(self_trunk, 0, sizeof(dict_chunk));
    self->content_count -= 1;
+}
+
+void dict_free(dict * self){
+    dict_chunk * self_trunk;
+    uint32_t location = 0;
+    for (location = location % self->size ; ; location++) {
+        self_trunk = self->dict_value + location;
+        free(self_trunk->ptr_key);
+    }
+    free(self);
 }
 
 
@@ -325,7 +334,6 @@ char * get_input(void){
     char * return_val;
     int c;
     while( (c=getchar()) != '\n'){
-
         list_append_int(input_list, c);
     }
     return_val = list_to_str(input_list);
@@ -349,10 +357,16 @@ typedef struct{
         } value;
 } csv_element;
 
+typedef struct csv_table{
+    char * table_name;
+    uint32_t element_count;
+    dict * table_dict;
+    list * table_element;
+    struct csv_table * father_table;
+    struct csv_table * successor_table;
+} csv_table;
 
-void print_csv_element(csv_element * element_){
-    char * name[] = {"number", "decimal", "string"};
-    printf("%s: ", name[element_->var_type - 1]);
+void csv_print_element(csv_element * element_){
     if (element_->var_type == CSV_FLOAT_){
         printf("%lf", element_->value.float_);
     }
@@ -364,7 +378,7 @@ void print_csv_element(csv_element * element_){
     }
 }
 
-list * split_csv_line(char * line, char ** buf_con){
+list * p__csv_split_line(char * line, char ** buf_con){
     // input: "hi, 33.3"
     // return: [['h', 'i'], ['3', '3', '.', '3']]
 
@@ -414,7 +428,7 @@ list * split_csv_line(char * line, char ** buf_con){
     return result_list;
 }
 
-csv_element * parse_csv_element(list * element){
+csv_element * p__csv_parse_element(list * element){
     // input: ['3', '3', '.', '3']
     // return csv_element{var_type = CSV_FLOAT_, value = 33.3}
 
@@ -471,19 +485,19 @@ csv_element * parse_csv_element(list * element){
     return current_element;
 }
 
-list * parse_csv_line(char * line, char ** buf_con){
-    list * list_line = split_csv_line(line, buf_con);
+list * p__csv_parse_line(char * line, char ** buf_con){
+    list * list_line = p__csv_split_line(line, buf_con);
     list * list_result = new_list();
     list * list_element;
 
     for (int i = 0; i < list_line->len; i++){
         list_element = list_get_node(list_line, i)->value;
-        list_append(list_result, parse_csv_element(list_element));
+        list_append(list_result, p__csv_parse_element(list_element));
     }
     return list_result;
 }
 
-char * _open_csv(char * file_name){
+char * p__csv_open_file(char * file_name){
     struct stat stat_;
     int file_handle = open(file_name, O_RDWR);
     if (file_handle < 0){
@@ -500,13 +514,13 @@ char * _open_csv(char * file_name){
     return file_ptr;
 }
 
-list * load_csv(char * file_name){
-    char * csv_file = _open_csv(file_name);
+list * p__csv_read_raw_table(char * file_name){
+    char * csv_file = p__csv_open_file(file_name);
     char * buf_con = csv_file;
     list * csv_list = new_list();
 
     while (true){
-        list_append(csv_list, parse_csv_line(buf_con, &buf_con));
+        list_append(csv_list, p__csv_parse_line(buf_con, &buf_con));
         if(buf_con[0] == '\0'){
             break;
         }
@@ -514,14 +528,62 @@ list * load_csv(char * file_name){
     return csv_list;
 }
 
-int main(void){
-    list * my_list;
-    my_list = load_csv("test.csv");
 
-    int element[2] = {1, 2};
-    print_csv_element(list_get_node(list_get_node(my_list, element[0])->value, element[1])->value);
+// Utility functions:
 
-//    list * my_list = parse_csv_line("\"hell,o\",hi,12234455,\"33.3\"", 36);
+
+bool input_yn_question(char * message){
+    char * input;
+    while (true) {
+        printf("%s (y/n)?: ", message);
+        input = get_input();
+        if (!strcmp(input, "y") || !strcmp(input, "Y")) {
+            return true;
+        }
+        if (!strcmp(input, "n") || !strcmp(input, "N")) {
+            return false;
+        }
+        printf("Invalid input.\n");
+    }
+}
+
+char * input_option_question(
+        char * message, char * error_message, int option_number, char * options[], bool print_options){
+    char * input;
+    while (true){
+        printf("%s", message);
+        if (print_options) {
+            printf(" (%s", options[0]);
+            for (int i = 1; i < option_number; i++) {
+                printf("/%s", options[i]);
+            }
+            printf(")?: ");
+        }
+        input = get_input();
+        for (int i = 0; i < option_number; i++){
+            if (!strcmp(input, options[i])){
+                return options[i];
+            }
+        }
+        printf("%s\n", error_message);
+    }
+}
+
+
+
+
+int main(void) {
+    list *my_list;
+    my_list = p__csv_read_raw_table("test.csv");
+
+    int element[2] = {0, 3};
+    csv_print_element(list_get_node(list_get_node(my_list, element[0])->value, element[1])->value);
+//    input_yn_question("input y or n");
+//    char * options[] = {"1", "2", "3", "exit"};
+//    while (1) {
+//        printf("%s", input_option_question("input a option", "bad option.", 4, options, true));
+//    }
+//    list * my_list = p__csv_parse_line("\"hell,o\",hi,12234455,\"33.3\"", 36);
 //
 //    list * x = new_list();
 //
