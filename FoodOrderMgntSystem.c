@@ -3,15 +3,25 @@
 #include <stdint.h>
 #include <stdbool.h>
 #include <string.h>
-#include <stdarg.h>
 #include <sys/mman.h>
 #include <sys/stat.h>
 #include <fcntl.h>
+#include <stdarg.h>
 
 #define print if(DEBUG)printf
 #define REHASH_LIMIT 0.7
 #define DEFAULT_DICT_SIZE 500
 
+void ERROR(char * message){
+    printf("\nERROR -- %s\n", message);
+    printf("\tPress enter to exit. ");
+    while(1){
+        if (getchar() == '\n'){
+            break;
+        }
+    }
+    exit(1);
+}
 
 bool DEBUG = false;
 
@@ -92,7 +102,6 @@ void dict_store(dict * self, char * key, void * value){
    if (self->content_count > REHASH_LIMIT * self->size){
       dict_remap(self, self->size + self->size / 2);
    }
-
    uint32_t hash_value = hash(key, self->rand_salt);
    uint32_t location = hash_value % self->size;
    dict_chunk * self_trunk = self->dict_value + location;
@@ -126,7 +135,7 @@ dict_chunk * p__dict_find_trunk(dict * self, char * key) {
    uint32_t location = hash_value % self->size;
    dict_chunk *self_trunk = self->dict_value + location;
    if (!self_trunk->is_used){
-      return NULL;
+      ERROR("The requested trunk does not exist.");
    }
    if (self_trunk->hash_value == hash_value){
       return self_trunk;
@@ -144,23 +153,19 @@ dict_chunk * p__dict_find_trunk(dict * self, char * key) {
          }
       }
       else{
-         return NULL;
+          ERROR("The requested trunk does not exist.");
       }
    }
 }
 
 void * dict_find(dict * self, char * key) {
-   dict_chunk * tmp = p__dict_find_trunk(self, key);
-   if (tmp){
-      return tmp->ptr_value;
-   }
-   return NULL;
+   return p__dict_find_trunk(self, key)->ptr_value;
 }
 
 // return the value and delete the key, return nu
 void dict_del(dict * self, char * key) {
    if ((self->content_count < REHASH_LIMIT * self->size / 2) && self->size > DEFAULT_DICT_SIZE) {
-      dict_remap(self, self->size / 1.5);
+      dict_remap(self, (size_t) (self->size / 1.5));
    }
 
    dict_chunk *self_trunk = p__dict_find_trunk(self, key);
@@ -200,7 +205,7 @@ node * list_get_node(list * self, size_t index){
         return self->first_node;
     }
     if (index >= self->len || index < 0){
-        return NULL;
+        ERROR("List out of index.");
     }
 
     size_t start_index;
@@ -497,16 +502,14 @@ list * p__csv_parse_line(char * line, char ** buf_con){
     return list_result;
 }
 
-char * p__csv_open_file(char * file_name){
+char * p__csv_read_file(char * file_name){
     struct stat stat_;
     int file_handle = open(file_name, O_RDWR);
     if (file_handle < 0){
-        printf("csv load failed, program terminated.");
-        exit(1);
+        ERROR("csv table load failed, program terminated.");
     }
     if (stat(file_name, &stat_) != 0){
-        printf("can't determine file's size. Program terminated.");
-        exit(1);
+        ERROR("csv table load failed: can't determine file's size. program terminated.");
     }
     char * file_ptr = mmap(NULL,stat_.st_size,
                         PROT_READ|PROT_WRITE,MAP_SHARED,
@@ -515,7 +518,7 @@ char * p__csv_open_file(char * file_name){
 }
 
 list * p__csv_read_raw_table(char * file_name){
-    char * csv_file = p__csv_open_file(file_name);
+    char * csv_file = p__csv_read_file(file_name);
     char * buf_con = csv_file;
     list * csv_list = new_list();
 
@@ -526,6 +529,33 @@ list * p__csv_read_raw_table(char * file_name){
         }
     }
     return csv_list;
+}
+
+dict * csv_open(char * file_name){
+    list * csv_raw_table = p__csv_read_raw_table(file_name);
+    list * csv_raw_line = list_get_node(csv_raw_table, 0)->value;
+    csv_table * current_table = NULL;
+    dict * csv_table_dict = new_dict(0);
+    char * table_name;
+
+    table_name = (char *)list_get_node(csv_raw_line, 0)->value;
+    if (((csv_element *) table_name)->value.string_[0] != '\t'){
+        ERROR("CSV file syntax error. File should begin with \"\\ttable_name\" .");
+    }
+    current_table = malloc(sizeof(csv_table));
+    current_table->table_name
+
+
+    for (uint32_t i = 1; i < csv_raw_table->len; i++){
+        csv_raw_line = list_get_node(csv_raw_table, i)->value;
+        if (csv_raw_line->len == 0){
+            continue;
+        }
+        if (((char *)list_get_node(csv_raw_line, 0)->value) [0] == '\t'){
+            // TODO: add new current_table and append the old dict into the csv_table_dict.
+        }
+
+    }
 }
 
 
@@ -576,7 +606,7 @@ int main(void) {
     list *my_list;
     my_list = p__csv_read_raw_table("test.csv");
 
-    int element[2] = {0, 3};
+    int element[2] = {3, 0};
     csv_print_element(list_get_node(list_get_node(my_list, element[0])->value, element[1])->value);
 //    input_yn_question("input y or n");
 //    char * options[] = {"1", "2", "3", "exit"};
