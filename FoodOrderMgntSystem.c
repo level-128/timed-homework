@@ -12,6 +12,8 @@
 #define REHASH_LIMIT 0.7
 #define DEFAULT_DICT_SIZE 500
 
+#define malloc malloc
+
 void ERROR(char * message){
     printf("\nERROR -- %s\n", message);
     printf("\tPress enter to exit. ");
@@ -135,7 +137,7 @@ dict_chunk * p__dict_find_trunk(dict * self, char * key) {
    uint32_t location = hash_value % self->size;
    dict_chunk *self_trunk = self->dict_value + location;
    if (!self_trunk->is_used){
-      ERROR("The requested trunk does not exist.");
+      ERROR("The requested trunk does not exist."); // TODO: replace behaviour into return NULL
    }
    if (self_trunk->hash_value == hash_value){
       return self_trunk;
@@ -175,8 +177,7 @@ void dict_del(dict * self, char * key) {
 
 void dict_free(dict * self){
     dict_chunk * self_trunk;
-    uint32_t location = 0;
-    for (location = location % self->size ; ; location++) {
+    for (uint32_t location = 0; location < self->size ; location++) {
         self_trunk = self->dict_value + location;
         free(self_trunk->ptr_key);
     }
@@ -316,22 +317,20 @@ char * list_to_str(list * self){
     return my_str;
 }
 
-void __attribute__((unused)) list_print_str(list * self){
+void list_print_str(list * self){
     // this function is used for debug only.
-    if (DEBUG){
-        printf("--list len: %zu, first node: %p, last node %p\n", self->len, self->first_node, self->last_node);
-        printf("--last visit node index: %zu last visit node: %p\n", self->last_visit_node_index,
-               self->last_visit_node);
-        node *this_node = self->first_node;
-        for (size_t i = 0; i < self->len; i++) {
-            printf("node: %zu, ", i);
-            printf("addr: %p, ", this_node);
-            printf("next addr: %p, ", this_node->next_node);
-            printf("value: \"%s\"\n", (char *) this_node->value);
-            this_node = this_node->next_node;
-        }
-        printf("\n");
+    printf("--list len: %zu, first node: %p, last node %p\n", self->len, self->first_node, self->last_node);
+    printf("--last visit node index: %zu last visit node: %p\n", self->last_visit_node_index,
+           self->last_visit_node);
+    node *this_node = self->first_node;
+    for (size_t i = 0; i < self->len; i++) {
+        printf("node: %zu, ", i);
+        printf("addr: %p, ", this_node);
+        printf("next addr: %p, ", this_node->next_node);
+        printf("value: \"%s\"\n", (char *) (this_node->value + 3));
+        this_node = this_node->next_node;
     }
+    printf("\n");
 }
 
 char * get_input(void){
@@ -362,16 +361,33 @@ typedef struct{
         } value;
 } csv_element;
 
-typedef struct csv_table{
-    char * table_name;
+typedef struct{
+    char * sheet_name;
     uint32_t element_count;
+    char ** sheet_titles;
+    uint32_t sheet_titles_count;
+    list * sheet_element;
+
+    uint32_t sheet_index_row;
+    dict * sheet_index_dict;
+
+    struct csv_sheet * father_sheet;
+    struct csv_sheet * successor_sheet;
+} csv_sheet;
+
+typedef struct{
+    list * table_list;
     dict * table_dict;
-    list * table_element;
-    struct csv_table * father_table;
-    struct csv_table * successor_table;
 } csv_table;
 
-void csv_print_element(csv_element * element_){
+typedef struct {
+    char * sheet_name;
+    uint32_t sheet_index_row;
+    list * sheet_titles;
+} sheet_properties;
+
+
+void __attribute__((unused)) csv_print_element(csv_element * element_){
     if (element_->var_type == CSV_FLOAT_){
         printf("%lf", element_->value.float_);
     }
@@ -381,6 +397,62 @@ void csv_print_element(csv_element * element_){
     else{
         printf("%s", element_->value.string_);
     }
+}
+
+bool csv_compare_element(csv_element * x, csv_element * y){
+    if (x->var_type != y->var_type){
+        return false;
+    }
+    if (x->var_type != CSV_STRING_){
+        return (x->value.string_ == y->value.string_); // comparing the memory as if they are char *.
+    }
+    return ! strcmp(x->value.string_, y->value.string_);
+}
+
+void csv_free_element(csv_element * self){
+    if (self->var_type == CSV_STRING_) {
+        free(self->value.string_);
+    }
+    free(self);
+}
+
+csv_sheet * csv_sheet_create(char * sheet_name, list * sheet_titles, uint32_t sheet_index_row){
+    csv_sheet * self = malloc(sizeof(csv_sheet));
+    self->element_count = 0;
+    strcpy(self->sheet_name, sheet_name);
+    self->sheet_titles = sheet_titles; // TODO:
+    self->sheet_index_row = sheet_index_row;
+
+    self->sheet_element = new_list();
+    self->sheet_index_dict = new_dict(0);
+    return self;
+}
+
+csv_sheet * csv_sheet_create_from_properties(sheet_properties * my_properties){ // TODO: complete
+    csv_sheet * ret = csv_sheet_create(my_properties->sheet_name, my_properties->sheet_titles, )
+}
+
+void csv_sheet_append(csv_sheet * self, list * column){
+    csv_element * index_element = (list_get_node(column, self->sheet_index_row)->value);
+    if (index_element->var_type != CSV_STRING_){
+        ERROR("Index element must be string.");
+    }
+    list_append(self->sheet_element, column);
+
+    dict_store(self->sheet_index_dict, index_element->value.string_, column);
+    self->element_count += 1;
+}
+
+list * csv_sheet_get_column_by_name(csv_sheet * self, char * index_name){
+    return dict_find(self->sheet_index_dict, index_name);
+}
+
+list * csv_sheet_get_column_by_index(csv_sheet * self, uint32_t index){
+    return list_get_node(self->sheet_element, index)->value;
+}
+
+csv_element * p__csv_visit_raw(list * self, uint32_t column, uint32_t row){
+    return list_get_node(list_get_node(self, column)->value, row)->value;
 }
 
 list * p__csv_split_line(char * line, char ** buf_con){
@@ -506,10 +578,10 @@ char * p__csv_read_file(char * file_name){
     struct stat stat_;
     int file_handle = open(file_name, O_RDWR);
     if (file_handle < 0){
-        ERROR("csv table load failed, program terminated.");
+        ERROR("csv csv_table load failed, program terminated.");
     }
     if (stat(file_name, &stat_) != 0){
-        ERROR("csv table load failed: can't determine file's size. program terminated.");
+        ERROR("csv csv_table load failed: can't determine file's size. program terminated.");
     }
     char * file_ptr = mmap(NULL,stat_.st_size,
                         PROT_READ|PROT_WRITE,MAP_SHARED,
@@ -531,33 +603,44 @@ list * p__csv_read_raw_table(char * file_name){
     return csv_list;
 }
 
-dict * csv_open(char * file_name){
-    list * csv_raw_table = p__csv_read_raw_table(file_name);
-    list * csv_raw_line = list_get_node(csv_raw_table, 0)->value;
-    csv_table * current_table = NULL;
-    dict * csv_table_dict = new_dict(0);
-    char * table_name;
 
-    table_name = (char *)list_get_node(csv_raw_line, 0)->value;
-    if (((csv_element *) table_name)->value.string_[0] != '\t'){
-        ERROR("CSV file syntax error. File should begin with \"\\ttable_name\" .");
-    }
-    current_table = malloc(sizeof(csv_table));
-    current_table->table_name
+#define __get_node_item(x) ((csv_element *)list_get_node(column, x)->value)->value
 
+sheet_properties * p__csv_try_read_properties(list * column){
+    sheet_properties * tmp = NULL;
+    csv_element * first_item = list_get_node(column, 0)->value;
+    if (first_item->var_type == CSV_STRING_){
+        if (first_item->value.string_[0] == '\t'){
+            tmp = malloc(sizeof(sheet_properties));
+            tmp->sheet_name = malloc(sizeof(char) * strlen(first_item->value.string_ + 1));
 
-    for (uint32_t i = 1; i < csv_raw_table->len; i++){
-        csv_raw_line = list_get_node(csv_raw_table, i)->value;
-        if (csv_raw_line->len == 0){
-            continue;
+            strcpy(tmp->sheet_name, first_item->value.string_ + 1);
+            tmp->sheet_index_row = __get_node_item(column->len - 1).int_;
+
+            csv_free_element(first_item);
+            csv_free_element(list_get_node(column, column->len - 1)->value);
+
+            list_pop(column, 0);
+            list_pop(column, column->len - 1);
+
+            tmp->sheet_titles = column;
+            }
         }
-        if (((char *)list_get_node(csv_raw_line, 0)->value) [0] == '\t'){
-            // TODO: add new current_table and append the old dict into the csv_table_dict.
-        }
-
-    }
+    return tmp;
 }
 
+void csv_open(char * file_name, csv_table * table){
+    list * csv_raw_table = p__csv_read_raw_table(file_name);
+    list * csv_raw_column = list_get_node(csv_raw_table, 0)->value;
+
+    sheet_properties * properties = p__csv_try_read_properties(csv_raw_column);
+    printf("sheet name: %s, index: ", properties->sheet_name);
+    csv_print_element(list_get_node(properties->sheet_titles, properties->sheet_index_row)->value);
+    list_print_str(properties->sheet_titles);
+    exit(0);
+
+
+}
 
 // Utility functions:
 
@@ -603,33 +686,6 @@ char * input_option_question(
 
 
 int main(void) {
-    list *my_list;
-    my_list = p__csv_read_raw_table("test.csv");
-
-    int element[2] = {3, 0};
-    csv_print_element(list_get_node(list_get_node(my_list, element[0])->value, element[1])->value);
-//    input_yn_question("input y or n");
-//    char * options[] = {"1", "2", "3", "exit"};
-//    while (1) {
-//        printf("%s", input_option_question("input a option", "bad option.", 4, options, true));
-//    }
-//    list * my_list = p__csv_parse_line("\"hell,o\",hi,12234455,\"33.3\"", 36);
-//
-//    list * x = new_list();
-//
-//    list_append(x, "hello");
-//    list_append(x, "hi");
-//    list_append(x, "world");
-//    list_append(x, "world2");
-//    list_append(x, "world3");
-//    list_append(x, "world4");
-//    list_append(x, "world5");
-//    list_append(x, "world6");
-//    list_append(x, "world7");
-
-//    list_print_str(x);
-//    list_pop(x, x->len - 1);
-//    list_pop(x, 3);
-//    list_print_str(x);
+    csv_open("test.csv", NULL);
 
 }

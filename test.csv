@@ -1,3 +1,4 @@
+	MY_TABLE, ROW1, ROW2, 1
 XZ?'q,9851984449,-4.32E-03,"	a tab char"
 H?6`z,4587658186,"a very long string which is longer than 50 char. This string also includes '""' and ','. It could be correctly parsed by using my code. "
 UeI;;,1721409030,"""4444444"""
