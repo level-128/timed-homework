@@ -6,13 +6,13 @@
 #include <sys/mman.h>
 #include <sys/stat.h>
 #include <fcntl.h>
-#include <stdarg.h>
 
 #define print if(DEBUG)printf
 #define REHASH_LIMIT 0.7
 #define DEFAULT_DICT_SIZE 500
 
-#define malloc malloc
+#define type(___x) ((csv_element * )___x)->var_type
+#define __get_node_item(column, x) ((csv_element *)list_get_node(column, x)->value)->value
 
 void ERROR(char * message){
     printf("\nERROR -- %s\n", message);
@@ -137,6 +137,7 @@ dict_chunk * p__dict_find_trunk(dict * self, char * key) {
    uint32_t location = hash_value % self->size;
    dict_chunk *self_trunk = self->dict_value + location;
    if (!self_trunk->is_used){
+       return NULL;
       ERROR("The requested trunk does not exist."); // TODO: replace behaviour into return NULL
    }
    if (self_trunk->hash_value == hash_value){
@@ -317,7 +318,7 @@ char * list_to_str(list * self){
     return my_str;
 }
 
-void list_print_str(list * self){
+__attribute__((unused)) void list_print_str(list * self){
     // this function is used for debug only.
     printf("--list len: %zu, first node: %p, last node %p\n", self->len, self->first_node, self->last_node);
     printf("--last visit node index: %zu last visit node: %p\n", self->last_visit_node_index,
@@ -364,7 +365,7 @@ typedef struct{
 typedef struct{
     char * sheet_name;
     uint32_t element_count;
-    char ** sheet_titles;
+    list * sheet_titles;
     uint32_t sheet_titles_count;
     list * sheet_element;
 
@@ -387,7 +388,7 @@ typedef struct {
 } sheet_properties;
 
 
-void __attribute__((unused)) csv_print_element(csv_element * element_){
+void csv_print_element(csv_element * element_){
     if (element_->var_type == CSV_FLOAT_){
         printf("%lf", element_->value.float_);
     }
@@ -419,8 +420,9 @@ void csv_free_element(csv_element * self){
 csv_sheet * csv_sheet_create(char * sheet_name, list * sheet_titles, uint32_t sheet_index_row){
     csv_sheet * self = malloc(sizeof(csv_sheet));
     self->element_count = 0;
+    self->sheet_name = malloc(strlen(sheet_name));
     strcpy(self->sheet_name, sheet_name);
-    self->sheet_titles = sheet_titles; // TODO:
+    self->sheet_titles = sheet_titles;
     self->sheet_index_row = sheet_index_row;
 
     self->sheet_element = new_list();
@@ -428,8 +430,10 @@ csv_sheet * csv_sheet_create(char * sheet_name, list * sheet_titles, uint32_t sh
     return self;
 }
 
-csv_sheet * csv_sheet_create_from_properties(sheet_properties * my_properties){ // TODO: complete
-    csv_sheet * ret = csv_sheet_create(my_properties->sheet_name, my_properties->sheet_titles, )
+csv_sheet * csv_sheet_create_from_properties(sheet_properties * my_properties){
+    csv_sheet * ret = csv_sheet_create(my_properties->sheet_name,
+                                       my_properties->sheet_titles, my_properties->sheet_index_row);
+    return ret;
 }
 
 void csv_sheet_append(csv_sheet * self, list * column){
@@ -443,6 +447,10 @@ void csv_sheet_append(csv_sheet * self, list * column){
     self->element_count += 1;
 }
 
+void csv_sheet_append_by_name(csv_table * self, char * csv_sheet_name, list * column){
+    csv_sheet_append(dict_find(self->table_dict, csv_sheet_name), column);
+}
+
 list * csv_sheet_get_column_by_name(csv_sheet * self, char * index_name){
     return dict_find(self->sheet_index_dict, index_name);
 }
@@ -453,6 +461,23 @@ list * csv_sheet_get_column_by_index(csv_sheet * self, uint32_t index){
 
 csv_element * p__csv_visit_raw(list * self, uint32_t column, uint32_t row){
     return list_get_node(list_get_node(self, column)->value, row)->value;
+}
+
+csv_table * new_csv_table(void){
+    csv_table * self = malloc(sizeof(csv_table));
+    self->table_dict = new_dict(0);
+    self->table_list = new_list();
+    return self;
+}
+
+
+void csv_table_append_sheet(csv_table * self, csv_sheet * _element){
+    dict_store(self->table_dict, _element->sheet_name, _element);
+    list_append(self->table_list, _element);
+}
+
+csv_sheet * csv_table_get_sheet(csv_table * self, char * sheet_name) {
+    return dict_find(self->table_dict, sheet_name);
 }
 
 list * p__csv_split_line(char * line, char ** buf_con){
@@ -518,45 +543,45 @@ csv_element * p__csv_parse_element(list * element){
     if (endptr[0] == '\0'){
         current_element->var_type = CSV_INT_;
     }
-
-    current_element->value.float_ = strtod(element_str, &endptr);
-    if (endptr[0] == '\0'){
-        current_element->var_type = CSV_FLOAT_;
-    }
-
-    else {
-        // it is a str
-        node *last_node;
-        // removing str at the first and the end
-
-        if (element_str[0] == '"' &&
-            element_str[element->len - 1] == '"') {
-            list_pop(element, 0);
-            list_pop(element, element->len - 1);
+    else{
+        current_element->value.float_ = strtod(element_str, &endptr);
+        if (endptr[0] == '\0'){
+            current_element->var_type = CSV_FLOAT_;
         }
-        // parse "" as "
-        node *current_node;
-        bool is_quote = false;
-        int element_char;
-        for (size_t i = 0; i < element->len; i++) {
-            current_node = list_get_node(element, i);
-            element_char = (int) (uint64_t) current_node->value;
-            if (element_char == '"') {
-                if (is_quote) {
-                    list_pop_node(element, current_node);
-                    element->last_visit_node = last_node;
-                    element->last_visit_node_index = i - 1;
-                } else {
-                    last_node = current_node;
+        else {
+            // it is a str
+            node *last_node;
+            // removing str at the first and the end
+
+            if (element_str[0] == '"' &&
+                element_str[element->len - 1] == '"') {
+                list_pop(element, 0);
+                list_pop(element, element->len - 1);
+            }
+            // parse "" as "
+            node *current_node;
+            bool is_quote = false;
+            int element_char;
+            for (size_t i = 0; i < element->len; i++) {
+                current_node = list_get_node(element, i);
+                element_char = (int) (uint64_t) current_node->value;
+                if (element_char == '"') {
+                    if (is_quote) {
+                        list_pop_node(element, current_node);
+                        element->last_visit_node = last_node;
+                        element->last_visit_node_index = i - 1;
+                    } else {
+                        last_node = current_node;
+                    }
+                    is_quote = !is_quote;
                 }
-                is_quote = !is_quote;
+                else{
+                    is_quote = false;
+                }
             }
-            else{
-                is_quote = false;
-            }
+            current_element->value.string_ = list_to_str(element);
+            current_element->var_type = CSV_STRING_;
         }
-        current_element->value.string_ = list_to_str(element);
-        current_element->var_type = CSV_STRING_;
     }
     free(element);
     return current_element;
@@ -604,8 +629,6 @@ list * p__csv_read_raw_table(char * file_name){
 }
 
 
-#define __get_node_item(x) ((csv_element *)list_get_node(column, x)->value)->value
-
 sheet_properties * p__csv_try_read_properties(list * column){
     sheet_properties * tmp = NULL;
     csv_element * first_item = list_get_node(column, 0)->value;
@@ -615,7 +638,7 @@ sheet_properties * p__csv_try_read_properties(list * column){
             tmp->sheet_name = malloc(sizeof(char) * strlen(first_item->value.string_ + 1));
 
             strcpy(tmp->sheet_name, first_item->value.string_ + 1);
-            tmp->sheet_index_row = __get_node_item(column->len - 1).int_;
+            tmp->sheet_index_row = __get_node_item(column, column->len - 1).int_;
 
             csv_free_element(first_item);
             csv_free_element(list_get_node(column, column->len - 1)->value);
@@ -632,14 +655,47 @@ sheet_properties * p__csv_try_read_properties(list * column){
 void csv_open(char * file_name, csv_table * table){
     list * csv_raw_table = p__csv_read_raw_table(file_name);
     list * csv_raw_column = list_get_node(csv_raw_table, 0)->value;
+    char * target_sheet_name;
+    csv_element * tmp;
 
     sheet_properties * properties = p__csv_try_read_properties(csv_raw_column);
-    printf("sheet name: %s, index: ", properties->sheet_name);
-    csv_print_element(list_get_node(properties->sheet_titles, properties->sheet_index_row)->value);
-    list_print_str(properties->sheet_titles);
-    exit(0);
+    csv_sheet * my_sheet = csv_sheet_create_from_properties(properties);
+    csv_table_append_sheet(table, my_sheet);
 
+    for (uint32_t i = 1; i < csv_raw_table->len; i++){
+        csv_raw_column = list_get_node(csv_raw_table, i)->value;
+        if (!csv_raw_column->len){
+            continue; // empty column
+        }
+        properties = p__csv_try_read_properties(csv_raw_column);
+        if (properties){
+            my_sheet = csv_sheet_create_from_properties(properties);
+            csv_table_append_sheet(table, my_sheet);
+            continue;
+        }
+        target_sheet_name = __get_node_item(csv_raw_column, 0).string_;
+        tmp = list_get_node(csv_raw_column, 0)->value;
+        list_pop(csv_raw_column, 0);
+        csv_sheet_append_by_name(table, target_sheet_name, csv_raw_column);
+        csv_free_element(tmp);
+    }
+}
 
+void csv_print_column(list * column){
+    for (uint32_t i = 0; i < column->len - 1; i++){
+        csv_print_element(list_get_node(column, i)->value);
+        printf("\t");
+    }
+    csv_print_element(list_get_node(column, column->len - 1)->value);
+    printf("\n");
+}
+
+void csv_print_sheet(csv_table * self, char * sheet_name){
+    csv_sheet * self_sheet = csv_table_get_sheet(self, sheet_name);
+    csv_print_column(self_sheet->sheet_titles);
+    for(uint32_t column_number = 0; column_number < self_sheet->element_count; column_number++){
+        csv_print_column(csv_sheet_get_column_by_index(self_sheet, column_number));
+    }
 }
 
 // Utility functions:
@@ -683,9 +739,9 @@ char * input_option_question(
 }
 
 
-
-
 int main(void) {
-    csv_open("test.csv", NULL);
+    csv_table * my_table = new_csv_table();
+    csv_open("test.csv", my_table);
+    csv_print_sheet(my_table, "MY_TABLE");
 
 }
