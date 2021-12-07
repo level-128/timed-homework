@@ -540,9 +540,13 @@ list *csv_sheet_get_column_by_index(csv_sheet *self, uint32_t index) {
    return $(self->sheet_element, index);
 }
 
+csv_element *csv_sheet_get_element_by_index(csv_sheet *self, uint32_t column, uint32_t row){
+   return $( $(self->sheet_element, column), row);
+}
+
 void csv_sheet_pop_column_by_index(csv_sheet *self, uint32_t index) {
    list *my_column = csv_sheet_get_column_by_index(self, index);
-   char *hash_element = ((csv_element *)$(my_column, self->sheet_index_row))->value.string_;
+   char *hash_element = ((csv_element *) $(my_column, self->sheet_index_row))->value.string_;
    dict_pop(self->sheet_index_dict, hash_element);
    csv_element_free_element_list(my_column);
    list_pop_by_index(self->sheet_element, index);
@@ -783,6 +787,10 @@ void csv_open(char *file_name, csv_table *table) {
    }
 }
 
+void *csv_save_sheets(char *file_name, char *sheets) {
+
+}
+
 void csv_print_column(list *column) {
    for (uint32_t i = 0; i < column->len - 1; i++) {
       csv_element_print(list_get_node(column, i)->value);
@@ -792,7 +800,7 @@ void csv_print_column(list *column) {
    printf("\n");
 }
 
-void csv_print_sheet(csv_sheet * self_sheet, char *index_prefix, char *index_name) {
+void csv_print_sheet(csv_sheet *self_sheet, char *index_prefix, char *index_name) {
    printf("%s\t", index_name);
    csv_print_column(self_sheet->sheet_titles);
    for (uint32_t column_number = 0; column_number < self_sheet->element_count; column_number++) {
@@ -825,11 +833,14 @@ bool input_yn_question(char *message) {
       printf("%s (y/n)?: ", message);
       input = get_input();
       if (!strcmp(input, "y") || !strcmp(input, "Y")) {
+         free(input);
          return true;
       }
       if (!strcmp(input, "n") || !strcmp(input, "N")) {
+         free(input);
          return false;
       }
+      free(input);
       printf("Invalid input.\n");
    }
 }
@@ -849,22 +860,94 @@ char *input_option_question(
       input = get_input();
       for (int i = 0; i < option_number; i++) {
          if (!strcmp(input, options[i])) {
+            free(input);
             return options[i];
          }
       }
+      free(input);
       printf("%s\n", error_message);
+   }
+}
+
+int64_t input_integer_question(char * message, char * error_message, int64_t min_value, int64_t max_value){
+   char * input;
+   char * end_ptr = NULL;
+   int64_t result;
+   while (true){
+      printf("%s", message);
+      input = get_input();
+      result = strtoll(input, &end_ptr, 10);
+      if (*end_ptr != '\0' || result > max_value || result < min_value || *input == '\0'){
+         printf("%s\n", error_message);
+         free(input);
+         continue;
+      }
+      free(input);
+      return result;
+   }
+}
+
+
+
+
+
+void order_food(csv_table * my_table) {
+   int table_number = input_integer_question("Enter the table number: ", "Invalid table number.", 1, 100);
+   csv_sheet *category_sheet = csv_table_get_sheet_by_name(my_table, "CATEGORY");
+   csv_print_sheet(category_sheet, "%u", "Category no.");
+
+   CATEGORY: {
+      int category_number = input_integer_question("Enter the category number: ", "Invalid category number.", 1,
+                                                   category_sheet->element_count);
+      char *category_name = csv_sheet_get_element_by_index(category_sheet, category_number - 1, 0)->value.string_;
+      csv_sheet *food_sheet = csv_table_get_sheet_by_name(my_table, category_name);
+      if (food_sheet->element_count == 0) {
+         printf("Empty food list.\n");
+         goto CATEGORY;
+      }
+      MENU:{
+         csv_print_sheet(food_sheet, "%u", "Category no.");
+         int food_number = input_integer_question("Enter the food number: ", "Invalid food number.", 1,
+                                                food_sheet->element_count);
+      };
+
+
+
+   }
+
+}
+
+
+void admin_section(csv_table * my_table){
+   printf("admin");
+}
+
+void main_menu(csv_table * my_table) {
+   while (1) {
+      printf("1)  Order food\n2)  Admin section\n3)  Exit\n");
+      int64_t option = input_integer_question("Option: ", "Unknown option.", 0, 3);
+      switch (option) {
+         case 1:
+            order_food(my_table);
+         case 2:
+            admin_section(my_table);
+         case 3:
+            exit(0);
+      }
    }
 }
 
 
 int main(void) {
    csv_table *my_table = new_csv_table();
-   csv_open("test.csv", my_table);
-   csv_sheet * my_sheet = csv_table_get_sheet_by_name(my_table, "MY_TABLE");
-   csv_print_sheet(my_sheet, "%u", "INDEX");
+   csv_open("food.csv", my_table);
 
-   list *my_column = csv_sheet_get_column_by_name(csv_table_get_sheet_by_name(my_table, "MY_TABLE"), "2LOf2");
-   csv_element_print($(my_column, 1));
+   main_menu(my_table);
+
+
+
+//   list *my_column = csv_sheet_get_column_by_name(csv_table_get_sheet_by_name(my_table, "MY_TABLE"), "2LOf2");
+//   csv_element_print($(my_column, 1));
 }
 
 
