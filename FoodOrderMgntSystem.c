@@ -1,42 +1,87 @@
+//smyww3 20393538 Weizheng Wang
+/*
+	This is my homework for course COMP 1038 (Programming and Algorithms) in
+	University of Nottingham Ningbo.
+
+	I decide to help future students' for handling their assignments by free
+	this software after the deadline of this assignment.
+
+	Before 28/Dec/2021 (UTC time), this software remains proprietary, and
+	source code will not be released due to the plagiarism policy of
+	Nottingham Ningbo. After 28/Dec/2021, this software will be released
+	under both GNU Affero General Public License version 3 and Mozilla Public
+	License version 2.0 with Exception:
+
+	Copyright Exception:
+	Modifying this program without accepting GNU Affero General Public License
+	version 3 and Mozilla Public License version 2.0 is allowed only for
+	coursework evaluating purpose; Program, which combined with this work, by
+   this purpose could remain proprietary or limit rights.
+
+	The reason that I decided to use copyleft license is because providing and
+	offering them opportunity to copy part of my code into their work is not what
+   I want; If students want to copy it without violating my rights, they
+   should include copyright notice to tell teachers that "I'm copying other's
+   work. ", which should not be allowed in an individual assignment. Freeing
+   this code is to provide students materials to learn from.
+
+
+									COPYRIGHT INFORMATION:
+	Copyright (C) 2021  Weizheng Wang
+	Email: weizheng.wang@uconn.edu / smyww3@nottingham.edu.cn
+
+	This program is free software: you can redistribute it and/or modify
+	it under the terms of the GNU Affero General Public License as published by
+	the Free Software Foundation, either version 3 of the License, or
+	(at your option) any later version.
+
+	This program is distributed in the hope that it will be useful,
+	but WITHOUT ANY WARRANTY; without even the implied warranty of
+	MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+	GNU Affero General Public License for more details.
+
+	You should have received a copy of the GNU Affero General Public License
+	along with this program.  If not, see <https://www.gnu.org/licenses/>.
+
+
+
+	This Source Code Form is subject to the terms of the Mozilla Public License,
+	v. 2.0. If a copy of the MPL was not distributed with this file, You can
+	obtain one at https://mozilla.org/MPL/2.0/.
+*/
+
 #include <stdio.h>
 #include <stdlib.h>
 #include <stdint.h>
 #include <stdbool.h>
-#include <string.h>
 #include <sys/mman.h>
 #include <sys/stat.h>
 #include <fcntl.h>
+#include <unistd.h>
+#include <wchar.h>
+#include <memory.h>
 
 
-#define type(x__) ((csv_element * )x__)->var_type
 #define __get_node_item(column, x) ((csv_element *)list_get_node(column, x)->value)->value
 #define $(list__, index__) list_get_node(list__, index__)->value
-#define VAL const static
 
-VAL int DEFAULT_DICT_SIZE = 500;
+const static int DEFAULT_DICT_SIZE = 500;
 
-VAL double REHASH_LIMIT = 0.7;
+const static double REHASH_LIMIT = 0.7;
 
-static uint64_t PRIME = 51539607599;
+const static uint64_t PRIME = 51539607599;
+/* this prime is the first prime starting at 1 << 35 + 1 << 34.
+it is computed by using following Python code:
 
+from sympy import sieve
+x = sieve.primerange(1 << 35 + 1 << 34)
+print(next(x))
 
-VAL int TYPE_LIST = 1;
-VAL int TYPE_DICT = 2;
-VAL int TYPE_ELEMENT = 3;
+if you want to run this code, it is strongly recommended to use pypy, instead of cpython, as Python interpreter.
+this prime will be used in the p__dict_hash function as the modular.
 
-
-char *MV(char *y) {
-   char *x = malloc(strlen(y) + 1);
-   strcpy(x, y);
-   free(y);
-   return x;
-}
-
-char *COPY(char *y) {
-   char *x = malloc(strlen(y) + 1);
-   strcpy(x, y);
-   return x;
-}
+make sure your system has sympy installed. if not, run 'pip install sympy' in your system console.
+*/
 
 void ERROR(char *message) {
    printf("\nERROR -- %s\n", message);
@@ -49,17 +94,7 @@ void ERROR(char *message) {
    exit(1);
 }
 
-/* this prime is the first prime starting at 1 << 35 + 1 << 34.
-it is computed by using following Python code:
 
-from sympy import sieve
-x = sieve.primerange(51539607552)
-print(next(x))
-
-if you want to run this code, it is strongly recommended to use pypy, instead of cpython, as Python interpreter.
-this prime will be used in the dict_hash function as the modular.
-this prime will be used in the p__dict_hash function as the modular.
-*/
 
 ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 // dictionary object
@@ -69,7 +104,8 @@ this prime will be used in the p__dict_hash function as the modular.
 // the individual trunk in the dictionary.
 typedef struct {
     bool is_used; // true if the chunk is empty, false otherwise.
-    bool is_at_default_location; // true   if the chunk stores itself at the index which it should belong.
+    bool is_at_default_location;
+	 // true   if the chunk stores itself at the index which it should belong.
     // false  if the index which it should belong has been occupied by another chunk.
     uint32_t hash_value; // the hash value of the key
     char *ptr_key;
@@ -219,7 +255,7 @@ void dict_pop(dict *self, char *key) {
    }
 
    dict_chunk *self_trunk = p__dict_find_trunk(self, key);
-   memset(self_trunk, 0, sizeof(dict_chunk));
+   memset(self_trunk, 0, sizeof(dict_chunk)); // TODO maybe wrong
    self->content_count -= 1;
 }
 
@@ -256,17 +292,11 @@ typedef struct {
 list *new_list(void);
 // create a new list
 
-list *new_list_init(uint32_t param_len, char *params[]);
-// create a new list with elements 'params[]' pre initialized in the list.
-
-node *list_get_node(list *self, size_t index);
+node *list_get_node(list *self, uint32_t index);
 // return the node in the list at index 'index'.
 
 void list_append(list *self, void *newval);
 // append an element 'newval' into the list.
-
-void list_append_int(list *self, int64_t newval);
-// append an integer 'newval' into the list.
 
 void list_pop_by_node(list *self, node *pop_node);
 // remove the node 'pop_node' from list.
@@ -276,9 +306,6 @@ void list_pop_by_index(list *self, size_t index);
 
 void list_free(list *self);
 // free the list. only frees every node and struct list;
-
-char *list_to_str(list *self);
-// return a str, pretending every element inside the list is a char, by linking each element.
 
 
 
@@ -297,15 +324,8 @@ list *new_list(void) {
    return self;
 }
 
-list *new_list_init(uint32_t param_len, char *params[]) {
-   list *self = new_list();
-   for (uint32_t i = 0; i < param_len; i++) {
-      list_append(self, params[i]);
-   }
-   return self;
-}
 
-node *list_get_node(list *self, size_t index) {
+node *list_get_node(list *self, uint32_t index) {
    if (index == 0) {
       return self->first_node;
    }
@@ -341,13 +361,21 @@ void list_append(list *self, void *newval) {
    self->len++;
 }
 
-void list_append_int(list *self, int64_t newval) {
-   union void_s_to_int {
-       void *void_s;
-       int64_t int_;
-   } tmp;
-   tmp.int_ = newval;
-   list_append(self, tmp.void_s);
+void list_insert_by_index(list *self, void *newval, uint32_t index){
+	node * tmp_node = malloc(sizeof(node));
+	tmp_node->value = newval;
+
+	if(index == 0){
+		tmp_node->next_node = self->first_node;
+		self->first_node = tmp_node;
+	}
+	else{
+		node *list_prev_node = list_get_node(self, index - 1);
+		node *list_aft_node = list_prev_node->next_node;
+		list_prev_node->next_node = tmp_node;
+		tmp_node->next_node = list_aft_node;
+	}
+	self->len += 1;
 }
 
 void list_pop_by_node(list *self, node *pop_node) {
@@ -383,24 +411,6 @@ void list_free(list *self) {
    free(self);
 }
 
-char *list_to_str(list *self) {
-   char *my_str = malloc(sizeof(char) * (self->len + 1));
-   node *current_element = self->first_node;
-
-   union void_s_to_char { // I know this conversion is SAFE and PLEASE DO NOT WARN ME.
-       void *void_s; // The reason which I DISLIKE C is it provided useless warning -- the
-       char char_;    // thing which C should do is provide me a block of memory and shut up; I know what i'm doing.
-   } tmp;
-
-   for (size_t i = 0; i < self->len; i++) {
-      tmp.void_s = current_element->value;
-      my_str[i] = tmp.char_;
-      current_element = current_element->next_node;
-   }
-   my_str[self->len] = '\0';
-   return my_str;
-}
-
 __attribute__((unused)) void list_print_str(list *self) {
    // this function is used for debug only.
    printf("--list len: %zu, first node: %p, last node %p\n", self->len, self->first_node, self->last_node);
@@ -419,6 +429,168 @@ __attribute__((unused)) void list_print_str(list *self) {
 
 
 ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+// Unicode str;
+////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+typedef struct {
+	list str_object;
+	uint32_t ref_count;
+} string;
+
+union void_s_to_wchar {
+	 void *void_s;
+	 wchar_t wchar;
+} str_conv;
+
+typedef node character;
+
+string *new_string(wchar_t str[]);
+
+void str_append(string *self, int64_t newval);
+
+string *new_string(wchar_t str[]) {
+	string * self = malloc(sizeof(string));
+	character *my_element = malloc(sizeof(node));
+	self->ref_count = 1;
+
+	self->str_object.first_node = my_element;
+	self->str_object.last_node = my_element;
+	self->str_object.len = 0;
+
+	self->str_object.last_visit_node_index = 0;
+	self->str_object.last_visit_node = my_element;
+
+	my_element->next_node = self->str_object.first_node;
+
+	if (str){
+		for (uint32_t i = 0; str[i] != '\0'; i++) {
+			str_append(self, str[i]);
+		}
+	}
+	return self;
+}
+
+void str_append(string *self, int64_t newval) {
+
+	str_conv.wchar = newval;
+	list_append(&self->str_object, str_conv.void_s);
+}
+
+int str_search(string *self, uint32_t from, wchar_t target[]){
+	int j = 0;
+	void * cache_node; // set the cache node at the first match wchar.
+
+	for (int i = from; i < self->str_object.len;){
+		str_conv.void_s = $(&self->str_object, i + j);
+		if (! target[j]){
+			self->str_object.last_visit_node_index = i;
+			self->str_object.last_visit_node = cache_node;
+			return i;
+		}
+		if (str_conv.wchar != target[j]) {
+			i++;
+			j = 0;
+			continue;
+		}
+		else {
+			if (j == 0){
+				cache_node = list_get_node(&self->str_object, i);
+			}
+			j++;
+		}
+	}
+	return -1;
+}
+
+void str_insert_by_index(string *self, wchar_t *str, uint32_t index){
+	size_t str_len = wcslen(str);
+	for (uint32_t i = 0; i < str_len; i++){
+		str_conv.wchar = str[i];
+		list_insert_by_index(&self->str_object, str_conv.void_s, index + i);
+	}
+}
+
+void str_replace(string *self, wchar_t * from, wchar_t * to, uint32_t max_replace_time){
+	if (!wcscmp(to, L"")){
+		ERROR("str_replace function tries to replace to an empty string.");
+	}
+	int index = 0;
+	int char_to_len = wcslen(to);
+	int char_from_len = wcslen(from);
+	for (int _ = 0; _ < max_replace_time;){
+		index = str_search(self, index, from);
+		if (index == -1){
+			break;
+		}
+
+		for (int i = 0; i< char_from_len; i++){
+			list_pop_by_node(&self->str_object, list_get_node(&self->str_object, index));
+		}
+		str_insert_by_index(self, to, index);
+		index += char_to_len - char_from_len;
+	}
+}
+
+void str_free(string *self){
+	if (self->ref_count == 1){
+		list_free((list *)self);
+	}
+	else{
+		self->ref_count -= 1;
+	}
+}
+
+bool str_cmpw(string *self, wchar_t * target){
+	for (uint32_t i = 0; i < self->str_object.len; i++){
+		str_conv.void_s = $(& self->str_object, i);
+		if (str_conv.wchar != target[i]){
+			return false;
+		}
+	}
+	return true;
+}
+
+void str_print(string *self){
+	for (uint32_t i = 0; i < self->str_object.len; i++){
+		str_conv.void_s = ($(&self->str_object, i));
+		putwchar(str_conv.wchar);
+	}
+}
+
+string *get_input(void) {
+	string *input_list = new_string(NULL);
+	char *return_val;
+	int c;
+	while ((c = getchar()) != '\n') {
+		str_append(input_list, c);
+	}
+	return input_list;
+}
+
+string * str_cpy(string* self){
+	self->ref_count += 1;
+	return self;
+}
+
+wchar_t *str_out(string *self) {
+	wchar_t *my_str = malloc(sizeof(wchar_t) * (self->str_object.len + 1));
+	node *current_element = self->str_object.first_node;
+
+	union void_s_to_char { // I know this conversion is SAFE and PLEASE DO NOT WARN ME.
+		 void *void_s; // The reason which I DISLIKE C is it provided useless warning -- the
+		 char char_;    // thing which C should do is provide me a block of memory and shut up; I know what i'm doing.
+	} tmp;
+
+	for (size_t i = 0; i < self->str_object.len; i++) {
+		tmp.void_s = current_element->value;
+		my_str[i] = tmp.char_;
+		current_element = current_element->next_node;
+	}
+	my_str[self->str_object.len] = '\0';
+	return my_str;
+}
+
+////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 // CSV data structures:
 ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 
@@ -431,19 +603,19 @@ typedef struct {
     union {
         int64_t int_;
         double float_;
-        char *string_;
+        string *string_;
     } value;
 } csv_element;
 
-bool csv_element_compare(csv_element *x, csv_element *y) {
-   if (x->var_type != y->var_type) {
-      return false;
-   }
-   if (x->var_type != CSV_STRING_) {
-      return (x->value.string_ == y->value.string_); // comparing the memory as if they are char *.
-   }
-   return !strcmp(x->value.string_, y->value.string_);
-}
+//bool csv_element_compare(csv_element *x, csv_element *y) {
+//   if (x->var_type != y->var_type) {
+//      return false;
+//   }
+//   if (x->var_type != CSV_STRING_) {
+//      return (x->value.string_ == y->value.string_); // comparing the memory as if they are char *.
+//   }
+//   return !strcmp(x->value.string_, y->value.string_);
+//}
 
 void csv_element_print(csv_element *element_) {
    if (element_->var_type == CSV_FLOAT_) {
@@ -451,13 +623,13 @@ void csv_element_print(csv_element *element_) {
    } else if (element_->var_type == CSV_INT_) {
       printf("%li", element_->value.int_);
    } else {
-      printf("%s", element_->value.string_);
+	   str_print(element_->value.string_);
    }
 }
 
 void csv_element_free(csv_element *self) {
    if (self->var_type == CSV_STRING_) {
-      free(self->value.string_);
+	   str_free(self->value.string_);
    }
    free(self);
 }
@@ -468,11 +640,11 @@ void csv_element_free_element_list(list *column) {
    }
 }
 
-void csv_element_delete_from_list(list *target_list, uint32_t index) {
-   node *tmp = list_get_node(target_list, index);
-   csv_element_free(tmp->value);
-   list_pop_by_node(target_list, tmp);
-}
+//void csv_element_delete_from_list(list *target_list, uint32_t index) {
+//   node *tmp_ = list_get_node(target_list, index);
+//   csv_element_free(tmp_->value);
+//   list_pop_by_node(target_list, tmp_);
+//}
 
 
 ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
@@ -504,7 +676,7 @@ csv_sheet *csv_sheet_create(char *sheet_name, list *sheet_titles, uint32_t sheet
    csv_sheet *self = malloc(sizeof(csv_sheet));
 
    self->element_count = 0;
-   self->sheet_name = COPY(sheet_name);
+   self->sheet_name = sheet_name;
    self->sheet_titles = sheet_titles;
    self->sheet_index_row = sheet_index_row;
 
@@ -597,7 +769,7 @@ list *p__csv_parse_split_line(char *line, char **buf_con) {
    // return: [['h', 'i'], ['3', '3', '.', '3']]
 
    list *result_list = new_list();
-   list *buf = new_list();
+   string *buf = new_string(NULL);
 
    bool is_quote = false;
    bool is_start_element = false;
@@ -624,14 +796,14 @@ list *p__csv_parse_split_line(char *line, char **buf_con) {
       }
       if (line[i] == ',' && (!is_quote)) {
          list_append(result_list, buf);
-         buf = new_list();
+         buf = new_string(NULL);
          is_start_element = false;
       } else {
          is_start_element = true;
-         list_append_int(buf, line[i]);
+         str_append(buf, line[i]);
       }
    }
-   if (buf->len > 0) {
+   if (buf->str_object.len > 0) {
       list_append(result_list, buf);
    } else {
       free(buf);
@@ -708,7 +880,7 @@ list *p__csv_parse_line(char *line, char **buf_con) {
 
 char *p__csv_read_file(char *file_name) {
    struct stat stat_;
-   int file_handle = open(file_name, O_RDWR);
+   int file_handle = open(file_name, O_RDWR | O_CREAT);
    if (file_handle < 0) {
       ERROR("csv csv_table load failed, program terminated.");
    }
@@ -716,9 +888,20 @@ char *p__csv_read_file(char *file_name) {
       ERROR("csv csv_table load failed: can't determine file's size. program terminated.");
    }
    char *file_ptr = mmap(NULL, stat_.st_size,
-                         PROT_READ | PROT_WRITE, MAP_SHARED,
+                         PROT_READ, MAP_SHARED,
                          file_handle, 0);
+	close(file_handle); // close the file handle DOES NOT unmap the file.
    return file_ptr;
+}
+
+char * p__csv_column_to_str(list* column){
+
+}
+
+void p__csv_save_file(char *file_name, bool is_append){
+	if (is_append) {
+		int file_handle = open(file_name, O_APPEND);
+	} // TODO
 }
 
 list *p__csv_read_raw_table(char *file_name) {
@@ -760,6 +943,10 @@ sheet_properties *p__csv_try_read_properties(list *column) {
 
 void csv_open(char *file_name, csv_table *table) {
    list *csv_raw_table = p__csv_read_raw_table(file_name);
+	if (csv_raw_table->len == 0){
+		list_free(csv_raw_table);
+		return; // empty file
+	}
    list *csv_raw_column = list_get_node(csv_raw_table, 0)->value;
 
    sheet_properties *properties;
@@ -785,6 +972,7 @@ void csv_open(char *file_name, csv_table *table) {
       csv_sheet_append_by_name(table, target_sheet_name, csv_raw_column);
       csv_element_free(tmp);
    }
+	list_free(csv_raw_table);
 }
 
 void *csv_save_sheets(char *file_name, char *sheets) {
@@ -813,19 +1001,6 @@ void csv_print_sheet(csv_sheet *self_sheet, char *index_prefix, char *index_name
 
 ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 // Utility functions:
-
-
-char *get_input(void) {
-   list *input_list = new_list();
-   char *return_val;
-   int c;
-   while ((c = getchar()) != '\n') {
-      list_append_int(input_list, c);
-   }
-   return_val = list_to_str(input_list);
-   list_free(input_list);
-   return return_val;
-}
 
 bool input_yn_question(char *message) {
    char *input;
@@ -939,10 +1114,14 @@ void main_menu(csv_table * my_table) {
 
 
 int main(void) {
-   csv_table *my_table = new_csv_table();
-   csv_open("food.csv", my_table);
+//   csv_table *my_table = new_csv_table();
+//   csv_open("food.csv", my_table);
+//
+//   main_menu(my_table);
 
-   main_menu(my_table);
+	string * my_str = new_string(L"我");
+	str_print(my_str);
+
 
 
 
