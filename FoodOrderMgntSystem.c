@@ -141,6 +141,8 @@ void dict_pop(dict *self, char *key);
 void dict_free(dict *self);
 // delete the dictionary
 
+// TODO: dict now append csv value
+
 
 uint32_t p__dict_hash(const char *key, uint32_t seed) {
    uint64_t result = 0;
@@ -153,6 +155,8 @@ uint32_t p__dict_hash(const char *key, uint32_t seed) {
    }
    return (result % 0xFFFFFFFF) ^ seed;
 }
+
+
 
 dict *new_dict(size_t size) {
    if (!size) {
@@ -555,6 +559,7 @@ void str_print(string *self){
 		str_conv.void_s = ($(&self->str_object, i));
 		putwchar(str_conv.wchar);
 	}
+
 }
 
 string *get_input(void) {
@@ -634,11 +639,6 @@ void csv_element_free(csv_element *self) {
    free(self);
 }
 
-void csv_element_free_element_list(list *column) {
-   for (uint32_t i = 0; i < column->len; i++) {
-      csv_element_free($(column, i));
-   }
-}
 
 //void csv_element_delete_from_list(list *target_list, uint32_t index) {
 //   node *tmp_ = list_get_node(target_list, index);
@@ -646,6 +646,58 @@ void csv_element_free_element_list(list *column) {
 //   list_pop_by_node(target_list, tmp_);
 //}
 
+////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+//csv column
+////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+typedef struct{
+    list column_object;
+    node *index_node;
+} column;
+
+column *new_column(void){
+	column *self = malloc(sizeof(column));
+
+	character *my_element = malloc(sizeof(node));
+
+	self->column_object.first_node = my_element;
+	self->column_object.last_node = my_element;
+	self->column_object.len = 0;
+
+	self->column_object.last_visit_node_index = 0;
+	self->column_object.last_visit_node = my_element;
+
+	my_element->next_node = self->column_object.first_node;
+	return self;
+}
+
+void col_append_int(column *self, int64_t int_){
+	csv_element *element = malloc(sizeof(element));
+	element->var_type = CSV_INT_;
+	element->value.int_ = int_;
+	list_append(&self->column_object, element);
+}
+
+void col_append_float(column *self, double float_){
+	csv_element *element = malloc(sizeof(element));
+	element->var_type = CSV_FLOAT_;
+	element->value.int_ = float_;
+	list_append(&self->column_object, element);
+}
+
+void col_append_string(column *self, string *string_){
+	csv_element *element = malloc(sizeof(element));
+	element->var_type = CSV_STRING_;
+	element->value.string_ = str_cpy(string_);
+	list_append(&self->column_object, element);
+}
+
+void col_free(column *self){
+	for (uint32_t i = 0; i<self->column_object.len; i++){
+		csv_element_free($(&self->column_object, i));
+	}
+	list_free((list *)self);
+}
 
 ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 
@@ -866,6 +918,7 @@ csv_element *p__csv_parse_element(list *element) {
    return current_element;
 }
 
+
 list *p__csv_parse_line(char *line, char **buf_con) {
    list *list_line = p__csv_parse_split_line(line, buf_con);
    list *list_result = new_list();
@@ -904,6 +957,8 @@ void p__csv_save_file(char *file_name, bool is_append){
 	} // TODO
 }
 
+
+
 list *p__csv_read_raw_table(char *file_name) {
    char *csv_file = p__csv_read_file(file_name);
    char *buf_con = csv_file;
@@ -918,7 +973,7 @@ list *p__csv_read_raw_table(char *file_name) {
    return csv_list;
 }
 
-sheet_properties *p__csv_try_read_properties(list *column) {
+sheet_properties *p__csv_try_read_properties(list *column) { // TODO
    sheet_properties *tmp = NULL;
    csv_element *first_item = list_get_node(column, 0)->value;
    if (first_item->var_type == CSV_STRING_) {
@@ -1119,8 +1174,9 @@ int main(void) {
 //
 //   main_menu(my_table);
 
-	string * my_str = new_string(L"我");
-	str_print(my_str);
+   string * my_str = new_string(L"f");
+   str_print(my_str);
+   printf("%i", str_cmpw(my_str, L"我"));
 
 
 
