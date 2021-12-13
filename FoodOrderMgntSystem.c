@@ -63,7 +63,7 @@
 
 
 #define __get_node_item(column, x) ((csv_element *)list_get_node(column, x)->value)->value
-#define $(list__, index__) list_get_node(list__, index__)->value
+#define $(list__, index__) list_get_node((list *)list__, index__)->value
 
 const static int DEFAULT_DICT_SIZE = 500;
 
@@ -92,185 +92,6 @@ void ERROR(char *message) {
       }
    }
    exit(1);
-}
-
-
-
-////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
-// dictionary object
-////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
-
-
-// the individual trunk in the dictionary.
-typedef struct {
-    bool is_used; // true if the chunk is empty, false otherwise.
-    bool is_at_default_location;
-	 // true   if the chunk stores itself at the index which it should belong.
-    // false  if the index which it should belong has been occupied by another chunk.
-    uint32_t hash_value; // the hash value of the key
-    char *ptr_key;
-    void *ptr_value;
-} dict_chunk;
-
-
-typedef struct {
-    uint32_t size; // the size of the dictionary
-    uint32_t content_count; // how many chunk are there in the dictionary
-    uint64_t rand_salt; // the salt of the hash function, generated per dict object.
-    dict_chunk *dict_value;
-} dict;
-
-dict *new_dict(size_t size);
-// create a new dictionary.
-
-uint32_t p__dict_hash(const char *key, uint32_t seed);
-
-void p__dict_remap(dict *self, size_t new_size);
-
-dict_chunk *p__dict_find_trunk(dict *self, char *key);
-
-void dict_store(dict *self, char *key, void *value);
-// store the value
-
-void *dict_find(dict *self, char *key);
-// find the value from key
-
-void dict_pop(dict *self, char *key);
-// delete the record of the key-value pair in dictionary. Does not free the value.
-
-void dict_free(dict *self);
-// delete the dictionary
-
-// TODO: dict now append csv value
-
-
-uint32_t p__dict_hash(const char *key, uint32_t seed) {
-   uint64_t result = 0;
-   for (uint32_t i = 0;; i++) {
-      if (key[i] == 0) {
-         break;
-      }
-      result += (uint64_t) key[i] << 56;
-      result %= PRIME;
-   }
-   return (result % 0xFFFFFFFF) ^ seed;
-}
-
-
-
-dict *new_dict(size_t size) {
-   if (!size) {
-      size = DEFAULT_DICT_SIZE;
-   }
-
-   dict *self = malloc(sizeof(dict));
-   self->dict_value = calloc(size, sizeof(dict_chunk));
-   self->size = size;
-   self->rand_salt = random();
-   return self;
-}
-
-void p__dict_remap(dict *self, size_t new_size) {
-   dict_chunk *old_dict = self->dict_value;
-   dict_chunk *tmp;
-   size_t size = self->size;
-
-   self->dict_value = calloc(sizeof(dict_chunk), new_size);
-   self->content_count = 0;
-   self->size = new_size;
-
-   for (size_t i = 0; i < size; i++) {
-      tmp = old_dict + i;
-      if (tmp->is_used) {
-         dict_store(self, tmp->ptr_key, tmp->ptr_value);
-      }
-   }
-   free(old_dict);
-}
-
-void dict_store(dict *self, char *key, void *value) {
-   if (self->content_count > REHASH_LIMIT * self->size) {
-      p__dict_remap(self, self->size + self->size / 2);
-   }
-   uint32_t hash_value = p__dict_hash(key, self->rand_salt);
-   uint32_t location = hash_value % self->size;
-   dict_chunk *self_trunk = self->dict_value + location;
-   if (self_trunk->is_used && self_trunk->hash_value != hash_value) {
-      location += 1;
-      for (location = location % self->size;; location++) {
-         self_trunk = self->dict_value + location;
-         if (self_trunk->is_at_default_location) {
-            continue;
-         }
-         if (!self_trunk->is_used) {
-            break;
-         }
-         if (self_trunk->hash_value == hash_value) {
-            break;
-         }
-      }
-   }
-   self_trunk->is_used = true;
-   self_trunk->is_at_default_location = (location == hash_value % self->size);
-   self_trunk->hash_value = hash_value;
-   self_trunk->ptr_key = malloc(sizeof(strlen(key)));
-   strcpy(self_trunk->ptr_key, key);
-   self_trunk->ptr_value = value;
-
-   self->content_count += 1;
-}
-
-dict_chunk *p__dict_find_trunk(dict *self, char *key) {
-
-   uint32_t hash_value = p__dict_hash(key, self->rand_salt);
-   uint32_t location = hash_value % self->size;
-   dict_chunk *self_trunk = self->dict_value + location;
-   if (!self_trunk->is_used) {
-      ERROR("The requested trunk does not exist.");
-   }
-   if (self_trunk->hash_value == hash_value) {
-      return self_trunk;
-   }
-
-   location += 1;
-   for (location = location % self->size;; location++) {
-      self_trunk = self->dict_value + location;
-      if (self_trunk->is_at_default_location) {
-         continue;
-      }
-      if (self_trunk->is_used) {
-         if (self_trunk->hash_value == hash_value) {
-            return self_trunk;
-         }
-      } else {
-         ERROR("The requested trunk does not exist.");
-      }
-   }
-}
-
-void *dict_find(dict *self, char *key) {
-   return p__dict_find_trunk(self, key)->ptr_value;
-}
-
-void dict_pop(dict *self, char *key) {
-
-   if ((self->content_count < REHASH_LIMIT * self->size / 2) && self->size > DEFAULT_DICT_SIZE) {
-      p__dict_remap(self, (size_t) (self->size / 1.5));
-   }
-
-   dict_chunk *self_trunk = p__dict_find_trunk(self, key);
-   memset(self_trunk, 0, sizeof(dict_chunk)); // TODO maybe wrong
-   self->content_count -= 1;
-}
-
-void dict_free(dict *self) {
-   // free the dictionary.
-   dict_chunk *self_trunk;
-   for (uint32_t location = 0; location < self->size; location++) {
-      self_trunk = self->dict_value + location;
-      free(self_trunk->ptr_key);
-   }
-   free(self);
 }
 
 
@@ -546,8 +367,20 @@ void str_free(string *self){
 
 bool str_cmpw(string *self, wchar_t * target){
 	for (uint32_t i = 0; i < self->str_object.len; i++){
-		str_conv.void_s = $(& self->str_object, i);
+		str_conv.void_s = $(self, i);
 		if (str_conv.wchar != target[i]){
+			return false;
+		}
+	}
+	return (bool)(!target[self->str_object.len]);
+}
+
+bool str_cmp(string *self, string * target){
+	if (self->str_object.len != target->str_object.len){
+		return false;
+	}
+	for (uint32_t i = 0; i < self->str_object.len; i++){
+		if ($(self, i) != $(target, i)){
 			return false;
 		}
 	}
@@ -603,6 +436,16 @@ wchar_t *str_out(string *self) {
 #define CSV_FLOAT_ 2
 #define CSV_STRING_ 3
 
+// equivalent Haskell pseudo code:
+
+/* data csv_element = csv_element {
+ *    var_type :: char
+ *    , value :: {int_ :: int64_t  |
+ *                float_ :: double |
+ *                string_ :: string}
+ *    } deriving (Show, Eq)
+ */
+
 typedef struct {
     char var_type;
     union {
@@ -612,15 +455,50 @@ typedef struct {
     } value;
 } csv_element;
 
-//bool csv_element_compare(csv_element *x, csv_element *y) {
-//   if (x->var_type != y->var_type) {
-//      return false;
-//   }
-//   if (x->var_type != CSV_STRING_) {
-//      return (x->value.string_ == y->value.string_); // comparing the memory as if they are char *.
-//   }
-//   return !strcmp(x->value.string_, y->value.string_);
-//}
+csv_element *csv_new_int(int64_t int_){
+	csv_element *self = malloc(sizeof(csv_element));
+	self->value.int_ = int_;
+	self->var_type = CSV_INT_;
+	return self;
+}
+
+csv_element *csv_new_float(int64_t float_){
+	csv_element *self = malloc(sizeof(csv_element));
+	self->value.float_ = float_;
+	self->var_type = CSV_FLOAT_;
+	return self;
+}
+
+csv_element *csv_new_str_from_wchar(wchar_t *str_){
+	csv_element *self = malloc(sizeof(csv_element));
+	string * string_ = new_string(str_);
+	self->value.string_ = string_;
+	self->var_type = CSV_STRING_;
+	return self;
+}
+
+csv_element *csv_new_str_from_str(string *str_) {
+	csv_element *self = malloc(sizeof(csv_element));
+	self->value.string_ = str_cpy(str_);
+	self->var_type = CSV_STRING_;
+	return self;
+}
+
+bool csv_cmp(csv_element *x, csv_element *y) {
+   if (x->var_type != y->var_type) {
+      return false;
+   }
+   if (x->value.int_ == y->value.int_) {
+      return true; // comparing the memory as if they are int.
+   }
+	if (x->var_type == CSV_STRING_){
+		return str_cmp(x->value.string_, y->value.string_);
+	}
+	else{
+		return false;
+	}
+
+}
 
 void csv_element_print(csv_element *element_) {
    if (element_->var_type == CSV_FLOAT_) {
@@ -672,24 +550,15 @@ column *new_column(void){
 }
 
 void col_append_int(column *self, int64_t int_){
-	csv_element *element = malloc(sizeof(element));
-	element->var_type = CSV_INT_;
-	element->value.int_ = int_;
-	list_append(&self->column_object, element);
+	list_append(&self->column_object, csv_new_int(int_));
 }
 
 void col_append_float(column *self, double float_){
-	csv_element *element = malloc(sizeof(element));
-	element->var_type = CSV_FLOAT_;
-	element->value.int_ = float_;
-	list_append(&self->column_object, element);
+	list_append(&self->column_object, csv_new_float(float_));
 }
 
 void col_append_string(column *self, string *string_){
-	csv_element *element = malloc(sizeof(element));
-	element->var_type = CSV_STRING_;
-	element->value.string_ = str_cpy(string_);
-	list_append(&self->column_object, element);
+	list_append(&self->column_object, csv_new_str_from_str(string_));
 }
 
 void col_free(column *self){
@@ -699,36 +568,214 @@ void col_free(column *self){
 	list_free((list *)self);
 }
 
+
+////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+// dictionary object
+////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+// the individual trunk in the dictionary.
+typedef struct {
+	 bool is_used; // true if the chunk is empty, false otherwise.
+	 bool is_at_default_location;
+	 // true   if the chunk stores itself at the index which it should belong.
+	 // false  if the index which it should belong has been occupied by another chunk.
+	 csv_element *key;
+	 column *value;
+} dict_chunk;
+
+
+typedef struct {
+	 uint32_t size; // the size of the dictionary
+	 uint32_t content_count; // how many chunk are there in the dictionary
+	 uint64_t rand_salt; // the salt of the hash function, generated per dict object.
+	 dict_chunk *dict_value;
+} dict;
+
+dict *new_dict(size_t size);
+// create a new dictionary.
+
+uint32_t p__dict_hash(const csv_element *key, uint32_t seed);
+
+void p__dict_remap(dict *self, size_t new_size);
+
+dict_chunk *p__dict_find_trunk(dict *self, csv_element *key);
+
+void dict_store(dict *self, csv_element *key, void *value);
+// store the value
+
+void *dict_find(dict *self, csv_element *key);
+// find the value from key
+
+void dict_pop(dict *self, csv_element *key);
+// delete the record of the key-value pair in dictionary. Does not free the value.
+
+void dict_free(dict *self);
+// delete the dictionary
+
+
+uint32_t p__dict_hash(const csv_element *key, uint32_t seed) {
+	if (key->var_type == CSV_STRING_) {
+
+		wchar_t * string_ = str_out(key->value.string_);
+		uint64_t result = 0;
+		for (uint32_t i = 0;; i++) {
+			if (string_[i] == 0) {
+				break;
+			}
+			result += (uint64_t) string_[i] << 56;
+			result %= PRIME;
+		}
+		return (result % 0xFFFFFFFF) ^ seed;
+	}
+	int64_t key_ = key->value.int_;
+	// hashing the address of the csv_element
+	return (intptr_t)key_ * ((int64_t)seed + (0L << 31)) % 1<<32;
+	// this code uses undefined behaviour (integer overflow) because of performance consideration, and the fact that in
+	// 64-bit systems long integer overflow will cause wraparound (because the register size are 64 bit max).
+
+
+}
+
+dict *new_dict(size_t size) {
+	if (!size) {
+		size = DEFAULT_DICT_SIZE;
+	}
+
+	dict *self = malloc(sizeof(dict));
+	self->dict_value = calloc(size, sizeof(dict_chunk));
+	self->size = size;
+	self->rand_salt = random();
+	return self;
+}
+
+void p__dict_remap(dict *self, size_t new_size) {
+	dict_chunk *old_dict = self->dict_value;
+	dict_chunk *tmp;
+	size_t size = self->size;
+
+	self->dict_value = calloc(sizeof(dict_chunk), new_size);
+	self->content_count = 0;
+	self->size = new_size;
+
+	for (size_t i = 0; i < size; i++) {
+		tmp = old_dict + i;
+		if (tmp->is_used) {
+			dict_store(self, tmp->key, tmp->value);
+		}
+	}
+	free(old_dict);
+}
+
+void dict_store(dict *self, csv_element *key, void *value) {
+	if (self->content_count > REHASH_LIMIT * self->size) {
+		// rehash the dict
+		p__dict_remap(self, self->size + self->size / 2);
+	}
+
+	uint32_t hash_value = p__dict_hash(key, self->rand_salt);
+	uint32_t location = hash_value % self->size;
+	dict_chunk *self_trunk = self->dict_value + location;
+	if (self_trunk->is_used && self_trunk->key != key) {
+		location += 1;
+		for (location = location % self->size;; location++) {
+			self_trunk = self->dict_value + location;
+			if (self_trunk->is_at_default_location == true) {
+				continue;
+			}
+			if (self_trunk->is_used == false) {
+				break;
+			}
+			if (csv_cmp(key, self_trunk->key)) {
+				break;
+			}
+		}
+	}
+	self_trunk->is_used = true;
+	self_trunk->is_at_default_location = (location == hash_value % self->size);
+	self_trunk->key = key;
+	self_trunk->value = value;
+
+	self->content_count += 1;
+}
+
+dict_chunk *p__dict_find_trunk(dict *self, csv_element *key) {
+
+	uint32_t hash_value = p__dict_hash(key, self->rand_salt);
+	uint32_t location = hash_value % self->size;
+	dict_chunk *self_trunk = self->dict_value + location;
+	if (!self_trunk->is_used) {
+		return NULL;
+	}
+	if (csv_cmp(self_trunk->key, key)) {
+		return self_trunk;
+	}
+
+	location += 1;
+	for (location = location % self->size;; location++) {
+		self_trunk = self->dict_value + location;
+		if (self_trunk->is_at_default_location) {
+			continue;
+		}
+		if (self_trunk->is_used) {
+			if (csv_cmp(self_trunk->key, key)) {
+				return self_trunk;
+			}
+		} else {
+			return NULL;
+		}
+	}
+}
+
+void *dict_find(dict *self, csv_element *key) {
+	return p__dict_find_trunk(self, key)->value;
+}
+
+void dict_pop(dict *self, csv_element *key) {
+
+	if ((self->content_count < REHASH_LIMIT * self->size / 2) && self->size > DEFAULT_DICT_SIZE) {
+		p__dict_remap(self, (size_t) (self->size / 1.5));
+	}
+
+	dict_chunk *self_trunk = p__dict_find_trunk(self, key);
+	memset(self_trunk, 0, sizeof(dict_chunk));
+	self->content_count -= 1;
+}
+
+void dict_free(dict *self) {
+	// free the dictionary.
+	free(self);
+}
+
+
+
+
 ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 
 
 typedef struct {
-    char *sheet_name;
+    string *sheet_name;
     uint32_t element_count;
-    list *sheet_titles;
-    uint32_t sheet_titles_count;
-    list *sheet_element;
-
+    column *sheet_titles;
+    list *sheet_element; // List[columns]
+	 // expend to
+	 // sheet_element: List[columns[csv_elements[int | float | string[w_char] ] ] ]
     uint32_t sheet_index_row;
     dict *sheet_index_dict;
-
-    struct csv_sheet *father_sheet;
-    struct csv_sheet *successor_sheet;
 } csv_sheet;
 
 
 typedef struct {
-    char *sheet_name;
+    string *sheet_name;
     uint32_t sheet_index_row;
-    list *sheet_titles;
+    column *sheet_titles;
 } sheet_properties;
 
 
-csv_sheet *csv_sheet_create(char *sheet_name, list *sheet_titles, uint32_t sheet_index_row) {
+csv_sheet *csv_sheet_create(string *sheet_name, column *sheet_titles, uint32_t sheet_index_row) {
    csv_sheet *self = malloc(sizeof(csv_sheet));
 
    self->element_count = 0;
-   self->sheet_name = sheet_name;
+   self->sheet_name = str_cpy(sheet_name);
    self->sheet_titles = sheet_titles;
    self->sheet_index_row = sheet_index_row;
 
@@ -745,22 +792,19 @@ csv_sheet *csv_sheet_create_from_properties(sheet_properties *my_properties) {
    return ret;
 }
 
-void csv_sheet_append(csv_sheet *self, list *column) {
-   csv_element *index_element = (list_get_node(column, self->sheet_index_row)->value);
-   if (index_element->var_type != CSV_STRING_) {
-      ERROR("Index element must be string.");
-   }
+void csv_sheet_append(csv_sheet *self, column *column) {;
    list_append(self->sheet_element, column);
-
-   dict_store(self->sheet_index_dict, index_element->value.string_, column);
+	if (self->sheet_index_row != -1){
+		dict_store(self->sheet_index_dict, $(column, self->sheet_index_row), column);
+	}
    self->element_count += 1;
 }
 
-list *csv_sheet_get_column_by_name(csv_sheet *self, char *index_name) {
-   return dict_find(self->sheet_index_dict, index_name);
+column *csv_sheet_get_column_by_name(csv_sheet *self, csv_element *index) {
+   return dict_find(self->sheet_index_dict, index);
 }
 
-list *csv_sheet_get_column_by_index(csv_sheet *self, uint32_t index) {
+column *csv_sheet_get_column_by_index(csv_sheet *self, uint32_t index) {
    return $(self->sheet_element, index);
 }
 
@@ -769,10 +813,10 @@ csv_element *csv_sheet_get_element_by_index(csv_sheet *self, uint32_t column, ui
 }
 
 void csv_sheet_pop_column_by_index(csv_sheet *self, uint32_t index) {
-   list *my_column = csv_sheet_get_column_by_index(self, index);
-   char *hash_element = ((csv_element *) $(my_column, self->sheet_index_row))->value.string_;
+   column *my_column = csv_sheet_get_column_by_index(self, index);
+   csv_element *hash_element = $(my_column, self->sheet_index_row);
    dict_pop(self->sheet_index_dict, hash_element);
-   csv_element_free_element_list(my_column);
+	col_free(my_column);
    list_pop_by_index(self->sheet_element, index);
    self->element_count -= 1;
 }
@@ -794,25 +838,28 @@ csv_table *new_csv_table(void) {
 }
 
 void csv_table_append_sheet(csv_table *self, csv_sheet *_element) {
-   dict_store(self->table_dict, _element->sheet_name, _element);
+   dict_store(self->table_dict, csv_new_str_from_str(_element->sheet_name), _element);
    list_append(self->table_list, _element);
 }
 
-csv_sheet *csv_table_get_sheet_by_name(csv_table *self, char *sheet_name) {
-   return dict_find(self->table_dict, sheet_name);
+csv_sheet *csv_table_get_sheet_by_name(csv_table *self, wchar_t *string_) {
+	csv_element *tmp = csv_new_str_from_wchar(string_);
+	csv_sheet * tmp_ = dict_find(self->table_dict, tmp);
+	csv_element_free(tmp);
+	return tmp_;
 }
 
 ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 
 
+//
+//csv_element *p__csv_visit_raw(list *self, uint32_t column, uint32_t row) {
+//   return list_get_node(list_get_node(self, column)->value, row)->value;
+//}
 
-csv_element *p__csv_visit_raw(list *self, uint32_t column, uint32_t row) {
-   return list_get_node(list_get_node(self, column)->value, row)->value;
-}
 
-
-void csv_sheet_append_by_name(csv_table *self, char *csv_sheet_name, list *column) {
-   csv_sheet_append(dict_find(self->table_dict, csv_sheet_name), column);
+void csv_sheet_append_by_name(csv_table *self, wchar_t *csv_sheet_name, column *column_) {
+   csv_sheet_append(csv_table_get_sheet_by_name(self, csv_sheet_name), column_);
 }
 
 
@@ -864,54 +911,60 @@ list *p__csv_parse_split_line(char *line, char **buf_con) {
    return result_list;
 }
 
-csv_element *p__csv_parse_element(list *element) {
+csv_element *p__csv_parse_element(string *element) {
    // input: ['3', '3', '.', '3']
    // return csv_element{var_type = CSV_FLOAT_, value = 33.3}
 
-   char *element_str = list_to_str(element);
-   char *endptr = NULL;
+   wchar_t *element_str = str_out(element);
+   wchar_t *endptr = NULL;
 
    csv_element *current_element = malloc(sizeof(csv_element));
 
-   current_element->value.int_ = strtoll(element_str, &endptr, 10);
+   current_element->value.int_ = wcstoll(element_str, &endptr, 10);
    if (endptr[0] == '\0') {
       current_element->var_type = CSV_INT_;
-   } else {
-      current_element->value.float_ = strtod(element_str, &endptr);
-      if (endptr[0] == '\0') {
-         current_element->var_type = CSV_FLOAT_;
-      } else {
-         // it is a str
-         node *last_node;
-         // removing str at the first and the end
 
-         if (element_str[0] == '"' &&
-             element_str[element->len - 1] == '"') {
-            list_pop_by_index(element, 0);
-            list_pop_by_index(element, element->len - 1);
-         }
-         // parse "" as "
-         node *current_node;
-         bool is_quote = false;
-         int element_char;
-         for (size_t i = 0; i < element->len; i++) {
-            current_node = list_get_node(element, i);
-            element_char = (int) (uint64_t) current_node->value;
-            if (element_char == '"') {
-               if (is_quote) {
-                  list_pop_by_node(element, current_node);
-                  element->last_visit_node = last_node;
-                  element->last_visit_node_index = i - 1;
-               } else {
-                  last_node = current_node;
-               }
-               is_quote = !is_quote;
-            } else {
-               is_quote = false;
-            }
-         }
-         current_element->value.string_ = list_to_str(element);
-         current_element->var_type = CSV_STRING_;
+   current_element->value.float_ = wcstod(element_str, &endptr);
+   if (endptr[0] == '\0') {
+      current_element->var_type = CSV_FLOAT_;
+
+
+
+
+
+
+
+//         // it is a str
+//         node *last_node;
+//         // removing str at the first and the end
+//
+//         if (element_str[0] == '"' &&
+//             element_str[element->str_object.len - 1] == '"') {
+//            list_pop_by_index(&element->str_object, 0);
+//            list_pop_by_index(element, element->str_object.len - 1);
+//         }
+//         // parse "" as "
+//         node *current_node;
+//         bool is_quote = false;
+//         int element_char;
+//         for (size_t i = 0; i < element->len; i++) {
+//            current_node = list_get_node(element, i);
+//            element_char = (int) (uint64_t) current_node->value;
+//            if (element_char == '"') {
+//               if (is_quote) {
+//                  list_pop_by_node(element, current_node);
+//                  element->last_visit_node = last_node;
+//                  element->last_visit_node_index = i - 1;
+//               } else {
+//                  last_node = current_node;
+//               }
+//               is_quote = !is_quote;
+//            } else {
+//               is_quote = false;
+//            }
+//         }
+//         current_element->value.string_ = list_to_str(element);
+//         current_element->var_type = CSV_STRING_;
       }
    }
    free(element);
