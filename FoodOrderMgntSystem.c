@@ -236,22 +236,6 @@ void list_free(list *self) {
 	free(self);
 }
 
-__attribute__((unused)) void list_print_str(list *self) {
-	// this function is used for debug only.
-	printf("--list len: %zu, first node: %p, last node %p\n", self->len, self->first_node, self->last_node);
-	printf("--last visit node index: %zu last visit node: %p\n", self->last_visit_node_index,
-	       self->last_visit_node);
-	node *this_node = self->first_node;
-	for (size_t i = 0; i < self->len; i++) {
-		printf("node: %zu, ", i);
-		printf("addr: %p, ", this_node);
-		printf("next addr: %p, ", this_node->next_node);
-		printf("value: \"%s\"\n", (char *) (this_node->value + 3));
-		this_node = this_node->next_node;
-	}
-	printf("\n");
-}
-
 
 ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 // Unicode str;
@@ -266,6 +250,11 @@ union void_s_to_wchar {
 	 void *void_s;
 	 wchar_t wchar;
 } str_conv;
+
+union void_s_to_char { // I know this conversion is SAFE and PLEASE DO NOT WARN ME.
+	 void *void_s; // The reason which I DISLIKE C is it provided useless warning -- the
+	 char char_;    // thing which C should do is provide me a block of memory and shut up; I know what i'm doing.
+} tmp;
 
 typedef node character;
 
@@ -297,15 +286,16 @@ string *new_string(wchar_t str[]) {
 
 void str_append(string *self, int64_t newval) {
 
-	str_conv.wchar = newval;
+	str_conv.wchar = (wchar_t) newval;
 	list_append(&self->str_object, str_conv.void_s);
 }
 
 int32_t str_search(string *self, uint32_t from, const wchar_t target[]) {
+	int i = 0;
 	int j = 0;
 	void *cache_node; // set the cache node at the first match wchar.
 
-	for (uint32_t i = from; i < self->str_object.len;) {
+	for (i = (int) from; (i + j) < self->str_object.len;) {
 		str_conv.void_s = $(&self->str_object, i + j);
 		if (!target[j]) {
 			self->str_object.last_visit_node_index = i;
@@ -323,6 +313,9 @@ int32_t str_search(string *self, uint32_t from, const wchar_t target[]) {
 			}
 			j++;
 		}
+	}
+	if (j == wcslen(target)) {
+		return i;
 	}
 	return -1;
 }
@@ -391,7 +384,6 @@ void str_print(string *self) {
 		str_conv.void_s = ($(&self->str_object, i));
 		putwchar(str_conv.wchar);
 	}
-
 }
 
 string *get_input(void) {
@@ -412,19 +404,15 @@ wchar_t *str_out(string *self) {
 	wchar_t *my_str = malloc(sizeof(wchar_t) * (self->str_object.len + 1));
 	node *current_element = self->str_object.first_node;
 
-	union void_s_to_char { // I know this conversion is SAFE and PLEASE DO NOT WARN ME.
-		 void *void_s; // The reason which I DISLIKE C is it provided useless warning -- the
-		 char char_;    // thing which C should do is provide me a block of memory and shut up; I know what i'm doing.
-	} tmp;
-
 	for (size_t i = 0; i < self->str_object.len; i++) {
 		tmp.void_s = current_element->value;
-		my_str[i] = (unsigned char)tmp.char_;
+		my_str[i] = (unsigned char) tmp.char_;
 		current_element = current_element->next_node;
 	}
 	my_str[self->str_object.len] = '\0';
 	return my_str;
 }
+
 
 ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 // CSV data structures:
@@ -483,9 +471,9 @@ csv_element *csv_new_str_from_str(string *str_) {
 	return self;
 }
 
-csv_element *csv_new_header_from_str(string *str_){
-	assert($(str_, 0) == (void *)'\t');
-	list_pop_by_index(&str_->str_object, 0);
+csv_element *csv_new_header_from_str(string *str_) {
+	assert($(str_, 0) == (void *) '\t');
+	list_pop_by_index(&str_->str_object, 0); // remove leading tab
 	csv_element *self = malloc(sizeof(csv_element));
 	self->value.string_ = str_cpy(str_);
 	self->var_type = CSV_HEADER;
@@ -517,19 +505,36 @@ void csv_element_print(csv_element *element_) {
 	}
 }
 
+void csv_element_write_out(csv_element *element_, FILE *stream){
+	if (element_->var_type == CSV_FLOAT_) {
+		fprintf(stream, "%lf,", element_->value.float_);
+	} else if (element_->var_type == CSV_INT_) {
+		fprintf(stream, "%li,", element_->value.int_);
+	} else {
+		string *tmp_str = new_string(str_out(element_->value.string_));
+		str_insert_by_index(tmp_str, L"\"", 0);
+		str_insert_by_index(tmp_str, L"\"", tmp_str->str_object.len);
+		str_replace(element_->value.string_, L"\"", L"\"\"", UINT32_MAX);
+		list_pop_by_index(&element_->value.string_->str_object, element_->value.string_->str_object.len - 1);
+		wchar_t * tmp_ = str_out(tmp_str);
+		str_free(tmp_str);
+		if (element_->var_type == CSV_HEADER){
+			fprintf(stream, "\t%ls,", tmp_);
+		}
+		else{
+			fprintf(stream, "%ls,", tmp_);
+		}
+		free(tmp_);
+	}
+}
+
+
 void csv_element_free(csv_element *self) {
 	if (self->var_type == CSV_STRING_) {
 		str_free(self->value.string_);
 	}
 	free(self);
 }
-
-
-//void csv_element_delete_from_list(list *target_list, uint32_t index) {
-//   node *tmp_ = list_get_node(target_list, index);
-//   csv_element_free(tmp_->value);
-//   list_pop_by_node(target_list, tmp_);
-//}
 
 ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 //csv column
@@ -563,6 +568,9 @@ void col_free(column *self) {
 	list_free((list *) self);
 }
 
+void col_out(column *self, FILE *stream){
+
+}
 
 ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 // dictionary object
@@ -627,8 +635,6 @@ uint32_t p__dict_hash(const csv_element *key, uint32_t seed) {
 	return (intptr_t) key_ * ((int64_t) seed + (0L << 31)) % 1 << 32;
 	// this code uses undefined behaviour (integer overflow) because of performance consideration, and the fact that in
 	// 64-bit systems long integer overflow will cause wraparound (because the register size are 64 bit max).
-
-
 }
 
 dict *new_dict(size_t size) {
@@ -645,7 +651,7 @@ dict *new_dict(size_t size) {
 
 void p__dict_remap(dict *self, size_t new_size) {
 	dict_chunk *old_dict = self->dict_value;
-	dict_chunk *tmp;
+	dict_chunk *tmp_;
 	size_t size = self->size;
 
 	self->dict_value = calloc(sizeof(dict_chunk), new_size);
@@ -653,9 +659,9 @@ void p__dict_remap(dict *self, size_t new_size) {
 	self->size = new_size;
 
 	for (size_t i = 0; i < size; i++) {
-		tmp = old_dict + i;
-		if (tmp->is_used) {
-			dict_store(self, tmp->key, tmp->value);
+		tmp_ = old_dict + i;
+		if (tmp_->is_used) {
+			dict_store(self, tmp_->key, tmp_->value);
 		}
 	}
 	free(old_dict);
@@ -694,7 +700,6 @@ void dict_store(dict *self, csv_element *key, void *value) {
 }
 
 dict_chunk *p__dict_find_trunk(dict *self, csv_element *key) {
-
 	uint32_t hash_value = p__dict_hash(key, self->rand_salt);
 	uint32_t location = hash_value % self->size;
 	dict_chunk *self_trunk = self->dict_value + location;
@@ -742,8 +747,6 @@ void dict_free(dict *self) {
 }
 
 
-
-
 ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 
 
@@ -780,11 +783,11 @@ csv_sheet *csv_sheet_create(string *sheet_name, column *sheet_titles, uint32_t s
 }
 
 csv_sheet *csv_sheet_create_from_header(column *my_properties) {
-	string * sheet_name = val(my_properties, 0).string_;
+	string *sheet_name = val(my_properties, 0).string_;
 	uint32_t sheet_index_row = val(my_properties, my_properties->column_object.len - 1).int_;
 	list_pop_by_index(&my_properties->column_object, 0);
 	list_pop_by_index(&my_properties->column_object, my_properties->column_object.len - 1);
-	csv_sheet *ret = csv_sheet_create(sheet_name,my_properties, sheet_index_row);
+	csv_sheet *ret = csv_sheet_create(sheet_name, my_properties, sheet_index_row);
 	return ret;
 }
 
@@ -817,7 +820,6 @@ void csv_sheet_pop_column_by_index(csv_sheet *self, uint32_t index) {
 	self->element_count -= 1;
 }
 
-
 ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 
 typedef struct {
@@ -842,19 +844,19 @@ csv_sheet *csv_table_get_sheet_by_key(csv_table *self, csv_element *key) {
 	return dict_find(self->table_dict, key);
 }
 
-////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
-
-
-//
-//csv_element *p__csv_visit_raw(list *self, uint32_t column, uint32_t row) {
-//   return list_get_node(list_get_node(self, column)->value, row)->value;
-//}
+csv_sheet *csv_table_get_sheet_by_name(csv_table *self, wchar_t *name) {
+	csv_element *tmp = csv_new_str_from_wchar(name);
+	csv_sheet *tmp_sheet = csv_table_get_sheet_by_key(self, tmp);
+	csv_element_free(tmp);
+	return tmp_sheet;
+}
 
 
 void csv_sheet_append_by_key(csv_table *self, csv_element *key, column *column_) {
 	csv_sheet_append(csv_table_get_sheet_by_key(self, key), column_);
 }
 
+////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 
 list *p__csv_parse_split_line(char *line, char **buf_con) {
 	// input: "hi, 33.3"
@@ -931,10 +933,9 @@ csv_element *p__csv_parse_element(string *element) {
 	}
 
 	str_replace(element, L"\"\"", L"\"", UINT32_MAX);
-	if (is_header){
+	if (is_header) {
 		return csv_new_header_from_str(element);
-	}
-	else{
+	} else {
 		return csv_new_str_from_str(element);
 	}
 
@@ -955,7 +956,7 @@ column *p__csv_parse_line(char *line, char **buf_con) {
 	return list_result;
 }
 
-char *p__csv_read_file(char *file_name) {
+void csv_open(char *file_name, csv_table *table) {
 	struct stat stat_;
 	int file_handle = open(file_name, O_RDWR | O_CREAT);
 	if (file_handle < 0) {
@@ -964,37 +965,34 @@ char *p__csv_read_file(char *file_name) {
 	if (stat(file_name, &stat_) != 0) {
 		ERROR("csv csv_table load failed: can't determine file's size. program terminated.");
 	}
-	char *file_ptr = mmap(NULL, stat_.st_size,
-	                      PROT_READ, MAP_SHARED,
-	                      file_handle, 0);
+	char *file_ptr = mmap(NULL, stat_.st_size,PROT_READ, MAP_SHARED,file_handle, 0);
 	close(file_handle); // close the file handle DOES NOT unmap the file.
-	return file_ptr;
-}
 
-void csv_open(char *file_name, csv_table *table) {
-	char *csv_file = p__csv_read_file(file_name);
-	char *buf_con = csv_file;
-	column * my_column;
+	char *buf_con = file_ptr;
+	column *my_column;
 
 	while (true) {
 		my_column = p__csv_parse_line(buf_con, &buf_con);
 		if (buf_con[0] == '\0') {
 			break;
 		}
-		csv_element * first_element = $(my_column, 0);
-		if (first_element->var_type == CSV_HEADER){
-			csv_sheet_create_from_header(my_column);
+		if (my_column->column_object.len == 0) {
+			col_free(my_column);
+			continue;
 		}
-		else{
+		csv_element *first_element = $(my_column, 0);
+		if (first_element->var_type == CSV_HEADER) {
+			csv_table_append_sheet(table, csv_sheet_create_from_header(my_column));
+		} else {
 			list_pop_by_index(&my_column->column_object, 0);
 			csv_sheet_append_by_key(table, first_element, my_column);
+			csv_element_free(first_element);
 		}
-		csv_element_free(first_element);
 	}
-	shm_unlink(csv_file);
+	munmap(file_ptr, stat_.st_size);
 }
 
-void *csv_save_sheets(char *file_name, char *sheets) {
+void *csv_save_sheets(char *file_name, char *sheet) {
 
 }
 
@@ -1008,6 +1006,10 @@ void csv_print_column(column *column) {
 }
 
 void csv_print_sheet(csv_sheet *self_sheet, char *index_prefix, char *index_name) {
+	if (self_sheet->element_count == 0) {
+		printf("empty sheet\n");
+		return;
+	}
 	printf("%s\t", index_name);
 	csv_print_column(self_sheet->sheet_titles);
 	for (uint32_t column_number = 0; column_number < self_sheet->element_count; column_number++) {
@@ -1039,7 +1041,8 @@ bool input_yn_question(char *message) {
 	}
 }
 
-wchar_t *input_option_question(char *message, char *error_message, int option_number, wchar_t *options[], bool print_options) {
+wchar_t *
+input_option_question(char *message, char *error_message, int option_number, wchar_t *options[], bool print_options) {
 	string *input;
 	while (true) {
 		printf("%s", message);
@@ -1087,14 +1090,14 @@ int64_t input_integer_question(char *message, char *error_message, int64_t min_v
 
 
 void order_food(csv_table *my_table) {
-	int table_number = input_integer_question("Enter the table number: ", "Invalid table number.", 1, 100);
-	csv_sheet *category_sheet = csv_table_get_sheet_by_key(my_table, "CATEGORY");
+	int table_number = (int) input_integer_question("Enter the table number: ", "Invalid table number.", 1, 100);
+	csv_sheet *category_sheet = csv_table_get_sheet_by_name(my_table, L"CATEGORY");
 	csv_print_sheet(category_sheet, "%u", "Category no.");
 
 	CATEGORY:
 	{
-		int category_number = input_integer_question("Enter the category number: ", "Invalid category number.", 1,
-		                                             category_sheet->element_count);
+		int category_number = (int) input_integer_question("Enter the category number: ", "Invalid category number.", 1,
+		                                                   category_sheet->element_count);
 		csv_element *category_name = csv_sheet_get_element_by_index(category_sheet, category_number - 1, 0);
 		csv_sheet *food_sheet = csv_table_get_sheet_by_key(my_table, category_name);
 		if (food_sheet->element_count == 0) {
@@ -1135,10 +1138,9 @@ void main_menu(csv_table *my_table) {
 
 
 int main(void) {
-   csv_table *my_table = new_csv_table();
-   csv_open("food.csv", my_table);
-
-   main_menu(my_table);
+	csv_table *my_table = new_csv_table();
+	csv_open("test.csv", my_table);
+	main_menu(my_table);
 
 //	string *my_str = new_string(L"f");
 //	str_print(my_str);
