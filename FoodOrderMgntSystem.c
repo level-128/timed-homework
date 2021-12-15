@@ -95,6 +95,7 @@ void ERROR(char *message) {
 	exit(1);
 }
 
+#define free(x) 1
 
 ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 // link list
@@ -260,7 +261,7 @@ typedef node character;
 
 string *new_string(wchar_t str[]);
 
-void str_append(string *self, int64_t newval);
+void str_append(string *self, wchar_t newval);
 
 string *new_string(wchar_t str[]) {
 	string *self = malloc(sizeof(string));
@@ -284,40 +285,32 @@ string *new_string(wchar_t str[]) {
 	return self;
 }
 
-void str_append(string *self, int64_t newval) {
+void str_append(string *self, wchar_t newval) {
 
-	str_conv.wchar = (wchar_t) newval;
+	str_conv.wchar = newval;
 	list_append(&self->str_object, str_conv.void_s);
 }
 
-int32_t str_search(string *self, uint32_t from, const wchar_t target[]) {
-	int i = 0;
-	int j = 0;
-	void *cache_node; // set the cache node at the first match wchar.
-
-	for (i = (int) from; (i + j) < self->str_object.len;) {
-		str_conv.void_s = $(&self->str_object, i + j);
-		if (!target[j]) {
-			self->str_object.last_visit_node_index = i;
-			self->str_object.last_visit_node = cache_node;
-			return i;
-			// implication-defined behaviour: narrowing conversion from unsigned int to int is implication-defined.
+int32_t str_search(string *self, uint32_t index, const wchar_t target[]) {
+	uint32_t target_str_len = wcslen(target);
+	uint32_t fit_len = 0;
+	for (;index < self->str_object.len; index++){
+		if (fit_len == target_str_len) {
+			return (int32_t) (index - fit_len);
 		}
-		if (str_conv.wchar != target[j]) {
-			i++;
-			j = 0;
-			continue;
-		} else {
-			if (j == 0) {
-				cache_node = list_get_node(&self->str_object, i);
-			}
-			j++;
+		if ((intptr_t) ($(self, index)) == target[fit_len]){
+			fit_len += 1;
+		}
+		else{
+			fit_len = 0;
 		}
 	}
-	if (j == wcslen(target)) {
-		return i;
+	if (fit_len == target_str_len) {
+		return (int32_t) (index - fit_len);
 	}
-	return -1;
+	else{
+		return -1;
+	}
 }
 
 void str_insert_by_index(string *self, wchar_t *str, uint32_t index) {
@@ -345,7 +338,7 @@ void str_replace(string *self, wchar_t *from, wchar_t *to, uint32_t max_replace_
 			list_pop_by_node(&self->str_object, list_get_node(&self->str_object, index));
 		}
 		str_insert_by_index(self, to, index);
-		index += char_to_len - char_from_len;
+		index += char_to_len - char_from_len + 1;
 	}
 }
 
@@ -512,10 +505,10 @@ void csv_element_write_out(csv_element *element_, FILE *stream){
 		fprintf(stream, "%li,", element_->value.int_);
 	} else {
 		string *tmp_str = new_string(str_out(element_->value.string_));
+
+		str_replace(tmp_str, L"\"", L"\"\"", UINT32_MAX);
 		str_insert_by_index(tmp_str, L"\"", 0);
-		str_insert_by_index(tmp_str, L"\"", tmp_str->str_object.len);
-		str_replace(element_->value.string_, L"\"", L"\"\"", UINT32_MAX);
-		list_pop_by_index(&element_->value.string_->str_object, element_->value.string_->str_object.len - 1);
+		str_append(tmp_str,  L'\"');
 		wchar_t * tmp_ = str_out(tmp_str);
 		str_free(tmp_str);
 		if (element_->var_type == CSV_HEADER){
@@ -568,8 +561,11 @@ void col_free(column *self) {
 	list_free((list *) self);
 }
 
-void col_out(column *self, FILE *stream){
-
+void col_write_out(column *self, FILE *stream){
+	for (uint32_t i = 0; i < self->column_object.len; i++){
+		csv_element_write_out($(self, i), stream);
+	}
+	fprintf(stream, "\n");
 }
 
 ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
@@ -820,6 +816,19 @@ void csv_sheet_pop_column_by_index(csv_sheet *self, uint32_t index) {
 	self->element_count -= 1;
 }
 
+void csv_sheet_write_out(csv_sheet *self, FILE *stream){
+	csv_element * sheet_name = csv_new_str_from_str(self->sheet_name);
+	sheet_name->var_type = CSV_HEADER;
+	csv_element_write_out(sheet_name, stream);
+	sheet_name->var_type = CSV_STRING_;
+	col_write_out(self->sheet_titles, stream);
+	for (uint32_t i = 0; i < self->element_count; i++){
+		csv_element_write_out(sheet_name, stream);
+		col_write_out($(self->sheet_element, i), stream);
+	}
+	csv_element_free(sheet_name);
+}
+
 ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 
 typedef struct {
@@ -845,9 +854,9 @@ csv_sheet *csv_table_get_sheet_by_key(csv_table *self, csv_element *key) {
 }
 
 csv_sheet *csv_table_get_sheet_by_name(csv_table *self, wchar_t *name) {
-	csv_element *tmp = csv_new_str_from_wchar(name);
-	csv_sheet *tmp_sheet = csv_table_get_sheet_by_key(self, tmp);
-	csv_element_free(tmp);
+	csv_element *tmp_ = csv_new_str_from_wchar(name);
+	csv_sheet *tmp_sheet = csv_table_get_sheet_by_key(self, tmp_);
+	csv_element_free(tmp_);
 	return tmp_sheet;
 }
 
@@ -992,8 +1001,13 @@ void csv_open(char *file_name, csv_table *table) {
 	munmap(file_ptr, stat_.st_size);
 }
 
-void *csv_save_sheets(char *file_name, char *sheet) {
-
+void csv_save_sheets(csv_table *self, uint32_t csv_sheet_count, wchar_t * sheets[], char * file_name) {
+	FILE * file_handle = fopen(file_name, "w+");
+	for (uint32_t i = 0; i < csv_sheet_count; i++){
+		wchar_t * current_sheet_name = sheets[i];
+		csv_sheet_write_out(csv_table_get_sheet_by_name(self, current_sheet_name), file_handle);
+	}
+	fclose(file_handle);
 }
 
 void csv_print_column(column *column) {
@@ -1138,13 +1152,11 @@ void main_menu(csv_table *my_table) {
 
 
 int main(void) {
+
 	csv_table *my_table = new_csv_table();
 	csv_open("test.csv", my_table);
-	main_menu(my_table);
-
-//	string *my_str = new_string(L"f");
-//	str_print(my_str);
-//	printf("%i", str_cmpw(my_str, L"我"));
+	wchar_t * sheets[] = {L"MY_TABLE"};
+	csv_save_sheets(my_table, 1, sheets, "test2.csv");
 
 
 
