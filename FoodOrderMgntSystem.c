@@ -61,6 +61,7 @@
 #include <wchar.h>
 #include <memory.h>
 #include <termios.h>
+#include <time.h>
 
 
 #define $(list__, index__) list_get_node((list *)list__, index__)->value
@@ -124,7 +125,7 @@ list *new_list(void);
 node *list_get_node(list *self, uint32_t index);
 // return the node in the list at index 'index'.
 
-void list_append(list *self, void *newval);
+void list_append(void *self, void *newval);
 // append an element 'newval' into the list.
 
 void list_pop_by_node(list *self, node *pop_node);
@@ -177,17 +178,18 @@ node *list_get_node(list *self, uint32_t index) {
 	return self->last_visit_node;
 }
 
-void list_append(list *self, void *newval) {
-	node *last_node = self->last_node;
+void list_append(void *self, void *newval) {
+
+	node *last_node = ((list*)self)->last_node;
 	node *new_element = malloc(sizeof(node));
 
-	new_element->next_node = self->first_node;
+	new_element->next_node = ((list*)self)->first_node;
 
 	last_node->value = newval;
 	last_node->next_node = new_element;
 
-	self->last_node = new_element;
-	self->len++;
+	((list*)self)->last_node = new_element;
+	((list*)self)->len++;
 }
 
 void list_insert_by_index(list *self, void *newval, uint32_t index) {
@@ -546,7 +548,7 @@ void csv_element_free(csv_element *self) {
 
 typedef struct {
 	 list column_object;
-	 node *index_node;
+	 node *father_node;
 } column;
 
 column *new_column(void) {
@@ -801,7 +803,9 @@ sheet *sheet_create_from_header(column *my_properties) {
 }
 
 void sheet_append(sheet *self, column *column) {
+	column->father_node = self->sheet_element->last_node;
 	list_append(self->sheet_element, column);
+
 	if (self->sheet_index_row != -1) {
 		dict_store(self->sheet_index_dict, $(column, self->sheet_index_row), column);
 	}
@@ -820,13 +824,22 @@ csv_element *sheet_get_element_by_index(sheet *self, uint32_t column, uint32_t r
 	return $($(self->sheet_element, column), row);
 }
 
-void sheet_pop_column_by_index(sheet *self, uint32_t index) {
-	column *my_column = sheet_get_column_by_index(self, index);
+void sheet_pop_column(sheet *self, column *my_column){
 	csv_element *hash_element = $(my_column, self->sheet_index_row);
 	dict_pop(self->sheet_index_dict, hash_element);
 	col_free(my_column);
-	list_pop_by_index(self->sheet_element, index);
+	list_pop_by_node(self->sheet_element, my_column->father_node);
 	self->element_count -= 1;
+}
+
+void sheet_pop_column_by_index(sheet *self, uint32_t index) {
+	column *my_column = sheet_get_column_by_index(self, index);
+	sheet_pop_column(self, my_column);
+}
+
+void sheet_pop_column_by_name(sheet *self, csv_element *index){
+	column *my_column = sheet_get_column_by_name(self, index);
+	sheet_pop_column(self, my_column);
 }
 
 void sheet_write_out(sheet *self, FILE *stream) {
@@ -1202,6 +1215,8 @@ int64_t input_integer_question(char *message, char *error_message, int64_t min_v
 	}
 }
 
+double enter_number_question(char * message, char *error_message)
+
 string *p__input_password() {
 	struct termios old_cfg, new_cfg;
 	string *password = new_string(L"");
@@ -1456,6 +1471,32 @@ void p__ordered_item_sheet_append(sheet *self, column *food_column, int category
 	val(food_column, 2).int_ -= qty;
 }
 
+void p__ordered_item_sheet_del(csv_table *self, sheet *order_sheet){
+	GOTO1:{}
+	printf("Enter the food number you want to remove from the selected list:");
+	csv_element *food_no = csv_new_str_from_str(get_input());
+	column * food_column = sheet_get_column_by_name(order_sheet, food_no);
+	if (food_column == NULL){
+		printf("Invalid food number.\n");
+		csv_element_free(food_no);
+		goto GOTO1;
+	}
+
+	int qty = val(food_column, 3).int_;
+	int category_number, food_number;
+	wchar_t * tmp_ = str_out(food_no->value.string_);
+	swscanf(tmp_, L"%i-%i", &category_number, &food_number);
+	free(tmp_);
+	csv_element_free(food_no);
+
+	sheet_pop_column(order_sheet, food_column);
+
+	sheet *menu_sheet = csv_table_get_sheet_by_name(self, L"MENU");
+	csv_element *food_sheet_name = sheet_get_element_by_index(menu_sheet, category_number - 1, 0);
+	sheet *food_sheet = csv_table_get_sheet_by_key(self, food_sheet_name);
+	sheet_get_element_by_index(food_sheet, food_number - 1, 2)->value.int_ += qty;
+}
+
 void p__ordered_item_print(sheet *self){
 	csv_print_sheet(self, "", "");
 
@@ -1478,9 +1519,50 @@ bool p__check_is_ordered(sheet *self, int category_number, int food_number){
 	return result;
 }
 
+void p__payment(csv_table *my_table, int table_number, uint64_t amount) {
+	bool is_cash = input_integer_question("1. Card 2. Cash (1/2)?: ", "Invalid input.", 1, 2) - 1;
+	string * card_number = NULL;
+	string * card_holder_name = NULL;
+	wchar_t * payment_method = is_cash ? L"Cash" : L"Card";
+
+	if (!is_cash){
+		wchar_t tmp_[10] = L"";
+		swprintf(tmp_, 10, L"%li", input_integer_question("Enter card number: ", "Invalid card number.", 100000000, 999999999));
+		card_number = new_string(tmp_);
+
+		JMP1:
+		printf("Enter the card holder’s name: ");
+		card_holder_name = get_input();
+		if (card_holder_name->str_object.len == 0){
+			printf("Invalid input.\n");
+			str_free(card_holder_name);
+			goto JMP1;
+		}
+		if (card_holder_name->str_object.len > 50){
+			printf("Input name is more than 50 characters.\n");
+			str_free(card_holder_name);
+			goto JMP1;
+		}
+	}
+	else{
+		card_number = new_string(L"");
+		card_holder_name = new_string(L"");
+	}
+	column *pay_record_column = new_column();
+	list_append(pay_record_column, csv_new_int(table_number));
+	list_append(pay_record_column, csv_new_str_from_wchar(payment_method));
+	list_append(pay_record_column, csv_new_str_from_str(card_number));
+	list_append(pay_record_column, csv_new_str_from_str(card_holder_name));
+	list_append(pay_record_column, csv_new_int((int64_t)amount));
+
+
+
+	printf("Payment successful.\n");
+}
+
 void order_food(csv_table *my_table) {
 	char sub_category_name[20] = "";
-	sheet *ordered_items = p__ordered_item_sheet_create();
+	sheet *ordered_sheet = p__ordered_item_sheet_create();
 
 	int table_number = (int) input_integer_question("Enter the table number: ", "Invalid table number.", 1, 100);
 	sheet *category_sheet = csv_table_get_sheet_by_name(my_table, L"MENU");
@@ -1509,14 +1591,14 @@ void order_food(csv_table *my_table) {
 				printf("Invalid food number.\n");
 				goto FOOD_MENU;
 			}
-			if (p__check_is_ordered(ordered_items, category_number, food_number)){
+			if (p__check_is_ordered(ordered_sheet, category_number, food_number)){
 				printf("You have already selected the food\n");
 			}
 			else {
 				int food_quantity = (int) input_integer_question("Enter the food item’s quantity: ", "Invalid quantity.", 1, food_availability);
 				food_availability -= food_quantity;
 				// append the ordered items
-				p__ordered_item_sheet_append(ordered_items, sheet_get_column_by_index(food_sheet, food_number - 1),
+				p__ordered_item_sheet_append(ordered_sheet, sheet_get_column_by_index(food_sheet, food_number - 1),
 				                             category_number, food_number, food_quantity);
 			}
 			if (food_availability && input_yn_question("Do you want to order more food")){
@@ -1528,7 +1610,7 @@ void order_food(csv_table *my_table) {
 			}
 
 			CHECK_OUT:
-			p__ordered_item_print(ordered_items);
+			p__ordered_item_print(ordered_sheet);
 			if (input_yn_question("Do you want to check out")){
 				goto PAYMENT;
 			}
@@ -1537,8 +1619,7 @@ void order_food(csv_table *my_table) {
 				goto CATEGORY;
 			}
 			if (input_yn_question("Do you want to remove from the selected food list")){
-				// TODO delete item
-				ERROR("deleted item not implemented.");
+				p__ordered_item_sheet_del(my_table, ordered_sheet);
 				goto CHECK_OUT;
 			}
 			goto PAYMENT;
