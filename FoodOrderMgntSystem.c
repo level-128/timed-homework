@@ -63,6 +63,8 @@
 #include <termios.h>
 #include <time.h>
 #include <inttypes.h>
+#include <errno.h>
+#include <stdarg.h>
 
 
 #define $(list__, index__) list_get_node((list *)list__, index__)->value
@@ -88,15 +90,20 @@ const static char *MENU_FILE_NAME = "menu.csv";
 const static char *TRANSITION_HISTORY_FILE_NAME = "trans_hist.csv";
 
 
-void ERROR(char *message) {
-	printf("\nERROR -- %s\n", message);
-	printf("\tPress enter to exit. ");
+void ERROR(int arg_count, ...) {
+	va_list args;
+	va_start(args, arg_count);
+	printf("\nERROR -- ");
+	for (uint32_t i = 0; i < arg_count; i++) {
+		printf("%s", va_arg(args, char *));
+	}
+	printf("\n\tPress enter to exit. ");
 	while (1) {
 		if (getchar() == '\n') {
 			break;
 		}
 	}
-	exit(1);
+	exit(errno);
 }
 
 //#define free(x) 1
@@ -161,7 +168,7 @@ node *list_get_node(list *self, uint32_t index) {
 		return self->first_node;
 	}
 	if (index >= self->len || index < 0) {
-		ERROR("List out of index.");
+		ERROR(1, "List out of index");
 	}
 
 	size_t start_index;
@@ -329,7 +336,7 @@ void str_insert_by_index(string *self, wchar_t *str, uint32_t index) {
 
 void str_replace(string *self, wchar_t *from, wchar_t *to, uint32_t max_replace_time) {
 	if (!wcscmp(to, L"")) {
-		ERROR("str_replace function tries to replace to an empty string.");
+		ERROR(1, "str_replace function tries to replace to an empty string.");
 	}
 	uint32_t index = 0;
 	uint32_t char_to_len = wcslen(to);
@@ -1059,9 +1066,9 @@ void p__create_menu_file(const char *file_name) {
 
 	list_append(&sheet_titles->column_object, csv_new_str_from_wchar(L"Name"));
 	sheet *menu = sheet_create(
-			new_string(L"MENU"),
-			sheet_titles,
-			0
+			  new_string(L"MENU"),
+			  sheet_titles,
+			  0
 	);
 	sheet_write_out(menu, file_handle);
 	sheet_free(menu);
@@ -1081,17 +1088,17 @@ void p__create_order_file(const char *file_name) {
 	tmp_append_col(L"Date");
 	tmp_append_col(L"Time");
 	sheet *transaction_history = sheet_create(
-			new_string(L"TRANSACTION_HISTORY"),
-			transaction_history_sheet_titles,
-			0
+			  new_string(L"TRANSACTION_HISTORY"),
+			  transaction_history_sheet_titles,
+			  0
 	);
 	sheet_write_out(transaction_history, file_handle);
 	sheet_free(transaction_history);
 
 	sheet *password_sheet = sheet_create(
-			new_string(L"PASSWORD"),
-			new_column(),
-			0
+			  new_string(L"PASSWORD"),
+			  new_column(),
+			  0
 	);
 	column *password = new_column();
 	list_append(&password->column_object, csv_new_str_from_wchar(L"admin"));
@@ -1108,10 +1115,19 @@ void p__csv_open(const char *file_name, csv_table *table) {
 	}
 	int file_handle = open(file_name, O_RDWR | O_CREAT);
 	if (file_handle < 0) {
-		ERROR("csv csv_table load failed, program terminated.");
+		ERROR(2, "csv table load failed, ", strerror(errno));
 	}
-	char *file_ptr = mmap(NULL, stat_.st_size, PROT_READ, MAP_SHARED, file_handle, 0);
+	if (stat(file_name, &stat_) == -1){
+		ERROR(2, "can't read the status of the file, ", strerror(errno));
+	}
+
+	char *file_ptr = mmap(NULL, stat_.st_size, PROT_READ, MAP_PRIVATE, file_handle, 0);
 	close(file_handle); // close the file handle DOES NOT unmap the file.
+
+	if (file_ptr == (char *) 0xffffffffffffffff) {
+		ERROR(3, "MMIO failed, ", strerror(errno),
+		      ". make sure the file is not located at the remote machine or access across VMs (for example: visiting file outside WSL).");
+	}
 
 	char *buf_con = file_ptr;
 	column *my_column;
@@ -1271,7 +1287,7 @@ string *p__input_password() {
 bool check_password(csv_table *self) {
 	string *input_password = p__input_password();
 	string *password =
-			sheet_get_element_by_index(csv_table_get_sheet_by_name(self, L"PASSWORD"), 0, 0)->value.string_;
+			  sheet_get_element_by_index(csv_table_get_sheet_by_name(self, L"PASSWORD"), 0, 0)->value.string_;
 	if (!str_cmp(password, input_password)) {
 		printf("Invalid password.\n");
 		str_free(input_password);
@@ -1346,9 +1362,9 @@ void add_category(csv_table *self) {
 		tmp_append_col_add_category(L"Availability");
 		tmp_append_col_add_category(L"Description");
 		sheet *food_sheet = sheet_create(
-				str_cpy(category_name->value.string_),
-				food_sheet_column,
-				0
+				  str_cpy(category_name->value.string_),
+				  food_sheet_column,
+				  0
 		);
 		csv_table_append_sheet(self, food_sheet);
 
@@ -1437,7 +1453,7 @@ void delete_food_item(csv_table *self) {
 			printf("Empty food list.\n");
 			return;
 		}
-		int64_t food = input_integer_question("Enter a category number:", "Invalid input.", 1, food_sheet->element_count);
+		int64_t food = input_integer_question("Enter a food number:", "Invalid input.", 1, food_sheet->element_count);
 
 		sheet_pop_column_by_index(food_sheet, food - 1);
 		printf("Successfully deleted.\n");
@@ -1462,44 +1478,50 @@ void view_food_items(csv_table *self) {
 	csv_print_sheet(csv_table_get_sheet_by_key(self, category_name), "%i", "Food no.");
 }
 
-bool p__is_valid_date(uint8_t year, uint8_t month, uint8_t day){
+bool p__is_valid_date(uint8_t year, uint8_t month, uint8_t day) {
 	year += 2000;
-	if (month > 12 || month < 1){
+	if (month > 12 || month < 1) {
 		return false;
 	}
 	bool is_leap_year = false;
-	if (year%4 == 0 && year%100 == 0 && year%400 == 0) {
+	if (year % 4 == 0 && year % 100 == 0 && year % 400 == 0) {
+		is_leap_year = true;
+	} else if (year % 4 == 0 && year % 100 != 0) {
 		is_leap_year = true;
 	}
-	else if (year%4==0 && year%100!=0) {
-		is_leap_year = true;
-	}
-	int date_for_each_month[] = {31, is_leap_year? 28:29, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31};
-	if (day > date_for_each_month[month - 1]){
+	int date_for_each_month[] = {31, is_leap_year ? 28 : 29, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31};
+	if (day > date_for_each_month[month - 1]) {
 		return false;
 	}
 	return true;
 }
 
-bool p__parse_date(string* raw_date, uint8_t *year, uint8_t *month, uint8_t *day){
-	if (raw_date->str_object.len != 8){
+bool p__parse_date(string *raw_date, uint8_t *year, uint8_t *month, uint8_t *day) {
+	if (raw_date->str_object.len != 8) {
 		return false;
 	}
 	wchar_t *raw_input_str = str_out(raw_date);
+	if (raw_input_str[2] != L'/' || raw_input_str[5] != L'/') {
+		return false;
+	}
+	raw_input_str[2] = L'\0';
+	raw_input_str[5] = L'\0';
 	wchar_t *ptr;
+
 	*year = wcstoul(raw_input_str, &ptr, 10);
-	if (*ptr == L'/'){
-		*month = wcstoul(ptr, &ptr, 10);
-		if (*ptr == L'/'){
-			*day = wcstoul(ptr, &ptr, 10);
-			if (*ptr == L'\0'){
-				free(raw_input_str);
-				return p__is_valid_date(*year, *month, *day);
-			}
-		}
+	if (*ptr) {
+		return false;
+	}
+	*month = wcstoul(raw_input_str + 3, &ptr, 10);
+	if (*ptr) {
+		return false;
+	}
+	*day = wcstoul(raw_input_str + 6, &ptr, 10);
+	if (*ptr) {
+		return false;
 	}
 	free(raw_input_str);
-	return false;
+	return p__is_valid_date(*year, *month, *day);
 }
 
 void p__input_date(uint8_t *year, uint8_t *month, uint8_t *day, char *msg) {
@@ -1518,14 +1540,14 @@ void p__input_date(uint8_t *year, uint8_t *month, uint8_t *day, char *msg) {
 	}
 }
 
-int p__compare_date(uint8_t year1, uint8_t month1, uint8_t day1, uint8_t year2, uint8_t month2, uint8_t day2){
-	if (year1 != year2){
+int p__compare_date(uint8_t year1, uint8_t month1, uint8_t day1, uint8_t year2, uint8_t month2, uint8_t day2) {
+	if (year1 != year2) {
 		return (year1 > year2) * 2 - 1;
 	}
-	if (month1 != month2){
+	if (month1 != month2) {
 		return (month1 > month2) * 2 - 1;
 	}
-	if (day1 != day2){
+	if (day1 != day2) {
 		return (day1 > day2) * 2 - 1;
 	}
 	return 0;
@@ -1534,10 +1556,10 @@ int p__compare_date(uint8_t year1, uint8_t month1, uint8_t day1, uint8_t year2, 
 void show_transit_history(csv_table *self) {
 	uint8_t year_from, year_to, month_from, month_to, day_from, day_to;
 	JMP1:
-	p__input_date(&year_from, &month_from, &day_from,"Enter start date: ");
+	p__input_date(&year_from, &month_from, &day_from, "Enter start date: ");
 	p__input_date(&year_to, &month_to, &day_to, "Enter end date: ");
-	if (p__compare_date(year_from, month_from, day_from, year_to, month_to, day_to) == 1){
-		printf("Start date must be on or before the end date.");
+	if (p__compare_date(year_from, month_from, day_from, year_to, month_to, day_to) == 1) {
+		printf("Start date must be on or before the end date.\n");
 		goto JMP1;
 	}
 
@@ -1546,11 +1568,11 @@ void show_transit_history(csv_table *self) {
 	sheet *transit_sheet = csv_table_get_sheet_by_name(self, L"TRANSACTION_HISTORY");
 	csv_print_column(transit_sheet->sheet_titles);
 	for (uint32_t column_number = 0; column_number < transit_sheet->element_count; column_number++) {
-		wchar_t * raw_time = $(sheet_get_column_by_index(transit_sheet, column_number), 5);
+		wchar_t *raw_time = $(sheet_get_column_by_index(transit_sheet, column_number), 5);
 		swscanf(raw_time, L"%"PRIu8"/%"PRIu8"/%"PRIu8, &year, &month, &day);
 		free(raw_time);
-		if (p__compare_date(year, month, day, year_from, month_from, day_from) != 1){
-			if (p__compare_date(year, month, day, year_to, year_to, day_to) != -1){
+		if (p__compare_date(year, month, day, year_from, month_from, day_from) != 1) {
+			if (p__compare_date(year, month, day, year_to, year_to, day_to) != -1) {
 				csv_print_column(sheet_get_column_by_index(transit_sheet, column_number));
 			}
 		}
@@ -1713,10 +1735,15 @@ void p__payment(csv_table *my_table, int table_number, uint64_t amount) {
 void order_food(csv_table *my_table) {
 	char sub_category_name[20] = "";
 	sheet *ordered_sheet = p__ordered_item_sheet_create();
+	sheet *category_sheet = csv_table_get_sheet_by_name(my_table, L"MENU");
+	if (category_sheet->element_count == 0){
+		printf("Empty category list\n");
+		return;
+	}
 
 	int table_number = (int) input_integer_question("Enter the table number: ", "Invalid table number.", 1, 100);
 	int64_t amount;
-	sheet *category_sheet = csv_table_get_sheet_by_name(my_table, L"MENU");
+
 	csv_print_sheet(category_sheet, "%i", "Category no.");
 
 	CATEGORY:
