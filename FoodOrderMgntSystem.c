@@ -1847,3 +1847,4 @@ int main(void) {
 	table *my_table = new_table();
 	csv_open(my_table);
 	main_menu(my_table);
+}
