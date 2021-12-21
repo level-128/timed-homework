@@ -68,8 +68,14 @@
 
 
 #define $(list__, index__) list_get_node((list *)list__, index__)->value
-#define val(list__, index__) (((csv_element *)(list_get_node((list *)list__, index__)->value))->value)
+#define val(list__, index__) (((element *)(list_get_node((list *)list__, index__)->value))->value)
+#define TINT_ 1
+#define TFLOAT_ 2
+#define TSTRING_ 3
+#define THEADER_ 4
 
+const static char *MENU_FILE_NAME = "menu.csv";
+const static char *TRANSITION_HISTORY_FILE_NAME = "trans_hist.csv";
 const static int DEFAULT_DICT_SIZE = 500;
 const static double REHASH_LIMIT = 0.7;
 const static uint64_t PRIME = 51539607599;
@@ -85,9 +91,6 @@ this prime will be used in the p__dict_hash function as the modular.
 
 make sure your system has sympy installed. if not, run 'pip install sympy' in your system console.
 */
-
-const static char *MENU_FILE_NAME = "menu.csv";
-const static char *TRANSITION_HISTORY_FILE_NAME = "trans_hist.csv";
 
 
 void ERROR(int arg_count, ...) {
@@ -106,11 +109,6 @@ void ERROR(int arg_count, ...) {
 	exit(errno);
 }
 
-//#define free(x) 1
-
-////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
-// link list
-////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 
 // node in the list.
 typedef struct node {
@@ -118,8 +116,9 @@ typedef struct node {
 	 struct node *next_node;
 } node;
 
-// list
-typedef struct {
+typedef node character;
+
+typedef struct list {
 	 size_t len; // the length of the linked list
 	 node *last_node; // the addr of the last node
 	 node *first_node; // the addr of the first node
@@ -127,25 +126,71 @@ typedef struct {
 	 node *last_visit_node; // record the last visited node from method 'list_get_node'
 } list;
 
-list *new_list(void);
-// create a new list
+typedef struct string {
+	 list str_object;
+	 uint32_t ref_count;
+} string;
 
-node *list_get_node(list *self, uint32_t index);
-// return the node in the list at index 'index'.
+typedef struct element {
+	 char var_type;
+	 union {
+		  int64_t int_;
+		  double float_;
+		  string *string_;
+	 } value;
+} element;
 
-void list_append(void *self, void *newval);
-// append an element 'newval' into the list.
+typedef struct column {
+	 list column_object;
+	 node *father_node;
+} column;
 
-void list_pop_by_node(list *self, node *pop_node);
-// remove the node 'pop_node' from list.
+// the individual trunk in the dictionary.
+typedef struct dict_chunk {
+	 bool is_used; // true if the chunk is empty, false otherwise.
+	 bool is_at_default_location;
+	 // true   if the chunk stores itself at the index which it should belong.
+	 // false  if the index which it should belong has been occupied by another chunk.
+	 element *key;
+	 column *value;
+} dict_chunk;
 
-void list_pop_by_index(list *self, size_t index);
-// remove the node at index 'index' from list.
+typedef struct dict {
+	 uint32_t size; // the size of the dictionary
+	 uint32_t content_count; // how many chunk are there in the dictionary
+	 uint64_t rand_salt; // the salt of the hash function, generated per dict object.
+	 dict_chunk *dict_value;
+} dict;
 
-void list_free(list *self);
-// free the list. only frees every node and struct list;
+typedef struct sheet {
+	 string *sheet_name;
+	 uint32_t element_count;
+	 column *sheet_titles;
+	 list *sheet_element; // List[columns]
+	 // expend to
+	 // sheet_element: List[columns[csv_elements[int | float | string[w_char] ] ] ]
+	 uint32_t sheet_index_row;
+	 dict *sheet_index_dict;
+} sheet;
 
+typedef struct table {
+	 list *table_list;
+	 dict *table_dict;
+} table;
 
+union void_s_to_wchar {
+	 void *void_s;
+	 wchar_t wchar;
+} str_conv;
+
+union void_s_to_char {
+	 void *void_s;
+	 char char_;
+} void_s_to_char;
+
+////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+// link list
+////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 
 list *new_list(void) {
 
@@ -161,7 +206,6 @@ list *new_list(void) {
 	my_element->next_node = self->first_node;
 	return self;
 }
-
 
 node *list_get_node(list *self, uint32_t index) {
 	if (index == 0) {
@@ -257,28 +301,12 @@ void list_free(list *self) {
 // Unicode str;
 ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 
-typedef struct {
-	 list str_object;
-	 uint32_t ref_count;
-} string;
+void str_append(string *self, wchar_t newval) {
+	str_conv.wchar = newval;
+	list_append(&self->str_object, str_conv.void_s);
+}
 
-union void_s_to_wchar {
-	 void *void_s;
-	 wchar_t wchar;
-} str_conv;
-
-union void_s_to_char { // I know this conversion is SAFE and PLEASE DO NOT WARN ME.
-	 void *void_s; // The reason which I DISLIKE C is it provided useless warning -- the
-	 char char_;    // thing which C should do is provide me a block of memory and shut up; I know what i'm doing.
-} tmp;
-
-typedef node character;
-
-string *new_string(wchar_t str[]);
-
-void str_append(string *self, wchar_t newval);
-
-string *new_string(wchar_t str[]) {
+string *new_str(wchar_t str[]) {
 	string *self = malloc(sizeof(string));
 	character *my_element = malloc(sizeof(node));
 	self->ref_count = 1;
@@ -298,12 +326,6 @@ string *new_string(wchar_t str[]) {
 		}
 	}
 	return self;
-}
-
-void str_append(string *self, wchar_t newval) {
-
-	str_conv.wchar = newval;
-	list_append(&self->str_object, str_conv.void_s);
 }
 
 int32_t str_search(string *self, uint32_t index, const wchar_t target[]) {
@@ -385,15 +407,15 @@ bool str_cmp(string *self, string *target) {
 	return true;
 }
 
-void str_print(string *self) {
+void str_printf(string *self) {
 	for (uint32_t i = 0; i < self->str_object.len; i++) {
 		str_conv.void_s = ($(&self->str_object, i));
 		putwchar(str_conv.wchar);
 	}
 }
 
-string *get_input(void) {
-	string *input_list = new_string(NULL);
+string *str_input(void) {
+	string *input_list = new_str(NULL);
 	int c;
 	while ((c = getchar()) != '\n') {
 		str_append(input_list, c);
@@ -411,89 +433,64 @@ wchar_t *str_out(string *self) {
 	node *current_element = self->str_object.first_node;
 
 	for (size_t i = 0; i < self->str_object.len; i++) {
-		tmp.void_s = current_element->value;
-		my_str[i] = (unsigned char) tmp.char_;
+		void_s_to_char.void_s = current_element->value;
+		my_str[i] = (unsigned char) void_s_to_char.char_;
 		current_element = current_element->next_node;
 	}
 	my_str[self->str_object.len] = '\0';
 	return my_str;
 }
 
-
 ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 // CSV data structures:
 ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 
-#define CSV_INT_ 1
-#define CSV_FLOAT_ 2
-#define CSV_STRING_ 3
-#define CSV_HEADER 4
-
-// equivalent Haskell pseudo code:
-
-/* data csv_element = csv_element {
- *    var_type :: char
- *    , value :: {int_ :: int64_t  |
- *                float_ :: double |
- *                string_ :: string}
- *    } deriving (Show, Eq)
- */
-
-typedef struct {
-	 char var_type;
-	 union {
-		  int64_t int_;
-		  double float_;
-		  string *string_;
-	 } value;
-} csv_element;
-
-csv_element *csv_new_int(int64_t int_) {
-	csv_element *self = malloc(sizeof(csv_element));
+element *ele_new_int(int64_t int_) {
+	element *self = malloc(sizeof(element));
 	self->value.int_ = int_;
-	self->var_type = CSV_INT_;
+	self->var_type = TINT_;
 	return self;
 }
 
-csv_element *csv_new_float(double float_) {
-	csv_element *self = malloc(sizeof(csv_element));
+element *ele_new_float(double float_) {
+	element *self = malloc(sizeof(element));
 	self->value.float_ = float_;
-	self->var_type = CSV_FLOAT_;
+	self->var_type = TFLOAT_;
 	return self;
 }
 
-csv_element *csv_new_str_from_wchar(wchar_t *str_) {
-	csv_element *self = malloc(sizeof(csv_element));
-	string *string_ = new_string(str_);
+element *ele_new_str(wchar_t *str_) {
+	element *self = malloc(sizeof(element));
+	string *string_ = new_str(str_);
 	self->value.string_ = string_;
-	self->var_type = CSV_STRING_;
+	self->var_type = TSTRING_;
 	return self;
 }
 
-csv_element *csv_new_str_from_str(string *str_) {
-	csv_element *self = malloc(sizeof(csv_element));
+element *ele_new_str_from_str(string *str_) {
+	element *self = malloc(sizeof(element));
 	self->value.string_ = str_;
-	self->var_type = CSV_STRING_;
+	self->var_type = TSTRING_;
 	return self;
 }
 
-csv_element *csv_new_header_from_str(string *str_) {
+element *ele_new_head_from_str(string *str_) {
 //	assert($(str_, 0) == (void *) '\t');
 	list_pop_by_index(&str_->str_object, 0); // remove leading tab
-	csv_element *self = malloc(sizeof(csv_element));
+	element *self = malloc(sizeof(element));
 	self->value.string_ = str_cpy(str_);
-	self->var_type = CSV_HEADER;
+	self->var_type = THEADER_;
 	return self;
 }
 
-bool element_cmp(csv_element *x, csv_element *y) {
+bool ele_cmp(element *x, element *y) {
 	if (x->var_type != y->var_type) {
 		return false;
 	}
 	if (x->value.int_ == y->value.int_) {
 		return true; // comparing the memory as if they are int.
 	}
-	if (x->var_type == CSV_STRING_) {
+	if (x->var_type == TSTRING_) {
 		return str_cmp(x->value.string_, y->value.string_);
 	} else {
 		return false;
@@ -501,39 +498,39 @@ bool element_cmp(csv_element *x, csv_element *y) {
 
 }
 
-csv_element *element_copy(csv_element *self) {
-	csv_element *new_element = malloc(sizeof(csv_element));
-	memcpy(new_element, self, sizeof(csv_element));
-	if (self->var_type == CSV_STRING_ || self->var_type == CSV_HEADER) {
+element *ele_cpy(element *self) {
+	element *new_element = malloc(sizeof(element));
+	memcpy(new_element, self, sizeof(element));
+	if (self->var_type == TSTRING_ || self->var_type == THEADER_) {
 		str_cpy(self->value.string_);
 	}
 	return new_element;
 }
 
-void csv_element_print(csv_element *element_) {
-	if (element_->var_type == CSV_FLOAT_) {
+void ele_printf(element *element_) {
+	if (element_->var_type == TFLOAT_) {
 		printf("%lf", element_->value.float_);
-	} else if (element_->var_type == CSV_INT_) {
+	} else if (element_->var_type == TINT_) {
 		printf("%li", element_->value.int_);
 	} else {
-		str_print(element_->value.string_);
+		str_printf(element_->value.string_);
 	}
 }
 
-void csv_element_write_out(csv_element *element_, FILE *stream) {
-	if (element_->var_type == CSV_FLOAT_) {
+void ele_write(element *element_, FILE *stream) {
+	if (element_->var_type == TFLOAT_) {
 		fprintf(stream, "%lf,", element_->value.float_);
-	} else if (element_->var_type == CSV_INT_) {
+	} else if (element_->var_type == TINT_) {
 		fprintf(stream, "%li,", element_->value.int_);
 	} else {
-		string *tmp_str = new_string(str_out(element_->value.string_));
+		string *tmp_str = new_str(str_out(element_->value.string_));
 
 		str_replace(tmp_str, L"\"", L"\"\"", UINT32_MAX);
 		str_insert_by_index(tmp_str, L"\"", 0);
 		str_append(tmp_str, L'\"');
 		wchar_t *tmp_ = str_out(tmp_str);
 		str_free(tmp_str);
-		if (element_->var_type == CSV_HEADER) {
+		if (element_->var_type == THEADER_) {
 			fprintf(stream, "\t%ls,", tmp_);
 		} else {
 			fprintf(stream, "%ls,", tmp_);
@@ -542,9 +539,8 @@ void csv_element_write_out(csv_element *element_, FILE *stream) {
 	}
 }
 
-
-void csv_element_free(csv_element *self) {
-	if (self->var_type == CSV_STRING_) {
+void ele_free(element *self) {
+	if (self->var_type == TSTRING_) {
 		str_free(self->value.string_);
 	}
 	free(self);
@@ -553,11 +549,6 @@ void csv_element_free(csv_element *self) {
 ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 //csv column
 ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
-
-typedef struct {
-	 list column_object;
-	 node *father_node;
-} column;
 
 column *new_column(void) {
 	column *self = malloc(sizeof(column));
@@ -578,21 +569,30 @@ column *new_column(void) {
 column *column_copy(column *self) {
 	column *self_new = new_column();
 	for (uint32_t i = 0; i < self->column_object.len; i++) {
-		list_append(&self_new->column_object, element_copy($(self, i)));
+		list_append(&self_new->column_object, ele_cpy($(self, i)));
 	}
 	return self_new;
 }
 
 void col_free(column *self) {
 	for (uint32_t i = 0; i < self->column_object.len; i++) {
-		csv_element_free($(&self->column_object, i));
+		ele_free($(&self->column_object, i));
 	}
 	list_free((list *) self);
 }
 
+void col_printf(column *column) {
+	for (uint32_t i = 0; i < column->column_object.len - 1; i++) {
+		ele_printf($(column, i));
+		printf("\t");
+	}
+	ele_printf($(column, column->column_object.len - 1));
+	printf("\n");
+}
+
 void col_write_out(column *self, FILE *stream) {
 	for (uint32_t i = 0; i < self->column_object.len; i++) {
-		csv_element_write_out($(self, i), stream);
+		ele_write($(self, i), stream);
 	}
 	fprintf(stream, "\n");
 }
@@ -601,48 +601,15 @@ void col_write_out(column *self, FILE *stream) {
 // dictionary object
 ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 
-// the individual trunk in the dictionary.
-typedef struct {
-	 bool is_used; // true if the chunk is empty, false otherwise.
-	 bool is_at_default_location;
-	 // true   if the chunk stores itself at the index which it should belong.
-	 // false  if the index which it should belong has been occupied by another chunk.
-	 csv_element *key;
-	 column *value;
-} dict_chunk;
-
-
-typedef struct {
-	 uint32_t size; // the size of the dictionary
-	 uint32_t content_count; // how many chunk are there in the dictionary
-	 uint64_t rand_salt; // the salt of the hash function, generated per dict object.
-	 dict_chunk *dict_value;
-} dict;
-
-dict *new_dict(size_t size);
-// create a new dictionary.
-
-uint32_t p__dict_hash(const csv_element *key, uint32_t seed);
-
 void p__dict_remap(dict *self, size_t new_size);
 
-dict_chunk *p__dict_find_trunk(dict *self, csv_element *key);
+dict_chunk *p__dict_find_trunk(dict *self, element *key);
 
-void dict_store(dict *self, csv_element *key, void *value);
-// store the value
-
-void *dict_find(dict *self, csv_element *key);
-// find the value from key
-
-void dict_pop(dict *self, csv_element *key);
-// delete the record of the key-value pair in dictionary. Does not free the value.
-
-void dict_free(dict *self);
-// delete the dictionary
+void dict_store(dict *self, element *key, void *value);
 
 
-uint32_t p__dict_hash(const csv_element *key, uint32_t seed) {
-	if (key->var_type == CSV_STRING_) {
+uint32_t p__dict_hash(const element *key, uint32_t seed) {
+	if (key->var_type == TSTRING_) {
 		wchar_t *string_ = str_out(key->value.string_);
 		uint64_t result = 0;
 		for (uint32_t i = 0;; i++) {
@@ -655,12 +622,13 @@ uint32_t p__dict_hash(const csv_element *key, uint32_t seed) {
 		return (result % 0xFFFFFFFF) ^ seed;
 	}
 	int64_t key_ = key->value.int_;
-	// hashing the address of the csv_element
+	// hashing the address of the element
 	return (intptr_t) key_ * ((int64_t) seed + (0L << 31)) % 1 << 32;
 	// this code uses undefined behaviour (integer overflow) because of performance consideration, and the fact that in
 	// 64-bit systems long integer overflow will cause wraparound (because the register size are 64 bit max).
 }
 
+// create a new dictionary object
 dict *new_dict(size_t size) {
 	if (!size) {
 		size = DEFAULT_DICT_SIZE;
@@ -691,7 +659,8 @@ void p__dict_remap(dict *self, size_t new_size) {
 	free(old_dict);
 }
 
-void dict_store(dict *self, csv_element *key, void *value) {
+// store the value
+void dict_store(dict *self, element *key, void *value) {
 	if (self->content_count > REHASH_LIMIT * self->size) {
 		// rehash the dict
 		p__dict_remap(self, self->size + self->size / 2);
@@ -709,7 +678,7 @@ void dict_store(dict *self, csv_element *key, void *value) {
 			if (self_trunk->is_used == false) {
 				break;
 			}
-			if (element_cmp(key, self_trunk->key)) {
+			if (ele_cmp(key, self_trunk->key)) {
 				break;
 			}
 		}
@@ -722,14 +691,14 @@ void dict_store(dict *self, csv_element *key, void *value) {
 	self->content_count += 1;
 }
 
-dict_chunk *p__dict_find_trunk(dict *self, csv_element *key) {
+dict_chunk *p__dict_find_trunk(dict *self, element *key) {
 	uint32_t hash_value = p__dict_hash(key, self->rand_salt);
 	uint32_t location = hash_value % self->size;
 	dict_chunk *self_trunk = self->dict_value + location;
 	if (!self_trunk->is_used) {
 		return NULL;
 	}
-	if (element_cmp(self_trunk->key, key)) {
+	if (ele_cmp(self_trunk->key, key)) {
 		return self_trunk;
 	}
 	location += 1;
@@ -739,7 +708,7 @@ dict_chunk *p__dict_find_trunk(dict *self, csv_element *key) {
 			continue;
 		}
 		if (self_trunk->is_used) {
-			if (element_cmp(self_trunk->key, key)) {
+			if (ele_cmp(self_trunk->key, key)) {
 				return self_trunk;
 			}
 		} else {
@@ -748,7 +717,8 @@ dict_chunk *p__dict_find_trunk(dict *self, csv_element *key) {
 	}
 }
 
-void *dict_find(dict *self, csv_element *key) {
+// find the value from key
+void *dict_find(dict *self, element *key) {
 	dict_chunk *tmp_ = p__dict_find_trunk(self, key);
 	if (tmp_) {
 		return tmp_->value;
@@ -756,8 +726,8 @@ void *dict_find(dict *self, csv_element *key) {
 	return NULL;
 }
 
-void dict_pop(dict *self, csv_element *key) {
-
+// delete the record of the key-value pair in dictionary. Does not free the value.
+void dict_pop(dict *self, element *key) {
 	if ((self->content_count < REHASH_LIMIT * self->size / 2) && self->size > DEFAULT_DICT_SIZE) {
 		p__dict_remap(self, (size_t) (self->size / 1.5));
 	}
@@ -767,28 +737,15 @@ void dict_pop(dict *self, csv_element *key) {
 	self->content_count -= 1;
 }
 
+// free the dictionary.
 void dict_free(dict *self) {
-	// free the dictionary.
+
 	free(self);
 }
 
-
 ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 
-
-typedef struct {
-	 string *sheet_name;
-	 uint32_t element_count;
-	 column *sheet_titles;
-	 list *sheet_element; // List[columns]
-	 // expend to
-	 // sheet_element: List[columns[csv_elements[int | float | string[w_char] ] ] ]
-	 uint32_t sheet_index_row;
-	 dict *sheet_index_dict;
-} sheet;
-
-
-sheet *sheet_create(string *sheet_name, column *sheet_titles, uint32_t sheet_index_row) {
+sheet *sheet_new(string *sheet_name, column *sheet_titles, uint32_t sheet_index_row) {
 	sheet *self = malloc(sizeof(sheet));
 
 	self->element_count = 0;
@@ -801,12 +758,12 @@ sheet *sheet_create(string *sheet_name, column *sheet_titles, uint32_t sheet_ind
 	return self;
 }
 
-sheet *sheet_create_from_header(column *my_properties) {
+sheet *sheet_new_from_header(column *my_properties) {
 	string *sheet_name = val(my_properties, 0).string_;
 	uint32_t sheet_index_row = val(my_properties, my_properties->column_object.len - 1).int_;
 	list_pop_by_index(&my_properties->column_object, 0);
 	list_pop_by_index(&my_properties->column_object, my_properties->column_object.len - 1);
-	sheet *ret = sheet_create(sheet_name, my_properties, sheet_index_row);
+	sheet *ret = sheet_new(sheet_name, my_properties, sheet_index_row);
 	return ret;
 }
 
@@ -820,61 +777,80 @@ void sheet_append(sheet *self, column *column) {
 	self->element_count += 1;
 }
 
-column *sheet_get_column_by_name(sheet *self, csv_element *index) {
+column *sheet_get_col_by_name(sheet *self, element *index) {
 	return dict_find(self->sheet_index_dict, index);
 }
 
-column *sheet_get_column_by_index(sheet *self, uint32_t index) {
+column *sheet_get_col_by_index(sheet *self, uint32_t index) {
 	return $(self->sheet_element, index);
 }
 
-csv_element *sheet_get_element_by_index(sheet *self, uint32_t column, uint32_t row) {
+element *sheet_get_ele_by_index(sheet *self, uint32_t column, uint32_t row) {
 	return $($(self->sheet_element, column), row);
 }
 
-void sheet_pop_column(sheet *self, column *my_column) {
-	csv_element *hash_element = $(my_column, self->sheet_index_row);
+void sheet_pop(sheet *self, column *my_column) {
+	element *hash_element = $(my_column, self->sheet_index_row);
 	dict_pop(self->sheet_index_dict, hash_element);
 	col_free(my_column);
 	list_pop_by_node(self->sheet_element, my_column->father_node);
 	self->element_count -= 1;
 }
 
-void sheet_pop_column_by_index(sheet *self, uint32_t index) {
-	column *my_column = sheet_get_column_by_index(self, index);
-	sheet_pop_column(self, my_column);
+void sheet_pop_by_index(sheet *self, uint32_t index) {
+	column *my_column = sheet_get_col_by_index(self, index);
+	sheet_pop(self, my_column);
 }
 
-void sheet_pop_column_by_name(sheet *self, csv_element *index) {
-	column *my_column = sheet_get_column_by_name(self, index);
-	sheet_pop_column(self, my_column);
+void sheet_pop_by_name(sheet *self, element *index) {
+	column *my_column = sheet_get_col_by_name(self, index);
+	sheet_pop(self, my_column);
+}
+
+void sheet_printf(sheet *self_sheet, char *index_prefix, char *index_name) {
+	if (self_sheet->element_count == 0) {
+		printf("Empty category list\n");
+		return;
+	}
+	bool is_print_index = strlen(index_prefix) && strlen(index_name);
+	if (is_print_index) {
+		printf("%s\t", index_name);
+	}
+	col_printf(self_sheet->sheet_titles);
+	for (uint32_t column_number = 0; column_number < self_sheet->element_count; column_number++) {
+		if (is_print_index) {
+			printf(index_prefix, column_number + 1);
+			printf("\t");
+		}
+		col_printf(sheet_get_col_by_index(self_sheet, column_number));
+	}
 }
 
 void sheet_write_out(sheet *self, FILE *stream) {
-	csv_element *sheet_name = csv_new_str_from_str(self->sheet_name);
-	sheet_name->var_type = CSV_HEADER;
-	csv_element_write_out(sheet_name, stream);
-	sheet_name->var_type = CSV_STRING_;
+	element *sheet_name = ele_new_str_from_str(self->sheet_name);
+	sheet_name->var_type = THEADER_;
+	ele_write(sheet_name, stream);
+	sheet_name->var_type = TSTRING_;
 
 	// write sheet_titles by adding index row at the end of the column.
-	csv_element *tmp_ = csv_new_int(self->sheet_index_row);
+	element *tmp_ = ele_new_int(self->sheet_index_row);
 	list_append(&self->sheet_titles->column_object, tmp_);
 	col_write_out(self->sheet_titles, stream);
-	csv_element_free(tmp_);
+	ele_free(tmp_);
 	list_pop_by_index(&self->sheet_titles->column_object, self->sheet_titles->column_object.len - 1);
 
 	for (uint32_t i = 0; i < self->element_count; i++) {
-		csv_element_write_out(sheet_name, stream);
+		ele_write(sheet_name, stream);
 		col_write_out($(self->sheet_element, i), stream);
 	}
-	csv_element_free(sheet_name);
+	ele_free(sheet_name);
 }
 
 void sheet_free(sheet *self) {
 	str_free(self->sheet_name);
 	col_free(self->sheet_titles);
 	for (uint32_t i = 0; i < self->element_count; i++) {
-		col_free(sheet_get_column_by_index(self, i));
+		col_free(sheet_get_col_by_index(self, i));
 	}
 	dict_free(self->sheet_index_dict);
 	free(self);
@@ -882,48 +858,41 @@ void sheet_free(sheet *self) {
 
 ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 
-typedef struct {
-	 list *table_list;
-	 dict *table_dict;
-} csv_table;
-
-
-csv_table *new_csv_table(void) {
-	csv_table *self = malloc(sizeof(csv_table));
+table *new_table(void) {
+	table *self = malloc(sizeof(table));
 	self->table_dict = new_dict(0);
 	self->table_list = new_list();
 	return self;
 }
 
-void csv_table_append_sheet(csv_table *self, sheet *_element) {
-	dict_store(self->table_dict, csv_new_str_from_str(_element->sheet_name), _element);
+void table_append_sheet(table *self, sheet *_element) {
+	dict_store(self->table_dict, ele_new_str_from_str(_element->sheet_name), _element);
 	list_append(self->table_list, _element);
 }
 
-sheet *csv_table_get_sheet_by_key(csv_table *self, csv_element *key) {
+sheet *table_get_sheet_by_key(table *self, element *key) {
 	return dict_find(self->table_dict, key);
 }
 
-sheet *csv_table_get_sheet_by_name(csv_table *self, wchar_t *name) {
-	csv_element *tmp_ = csv_new_str_from_wchar(name);
-	sheet *tmp_sheet = csv_table_get_sheet_by_key(self, tmp_);
-	csv_element_free(tmp_);
+sheet *table_get_sheet_by_name(table *self, wchar_t *name) {
+	element *tmp_ = ele_new_str(name);
+	sheet *tmp_sheet = table_get_sheet_by_key(self, tmp_);
+	ele_free(tmp_);
 	return tmp_sheet;
 }
 
-
-void sheet_append_by_key(csv_table *self, csv_element *key, column *column_) {
-	sheet_append(csv_table_get_sheet_by_key(self, key), column_);
+void sheet_append_by_key(table *self, element *key, column *column_) {
+	sheet_append(table_get_sheet_by_key(self, key), column_);
 }
 
 ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
-
+// parser
 list *p__csv_parse_split_line(char *line, char **buf_con) {
 	// input: "hi, 33.3"
 	// return: [['h', 'i'], ['3', '3', '.', '3']]
 
 	list *result_list = new_list();
-	string *buf = new_string(NULL);
+	string *buf = new_str(NULL);
 
 	bool is_quote = false;
 	bool is_start_element = false;
@@ -950,7 +919,7 @@ list *p__csv_parse_split_line(char *line, char **buf_con) {
 		}
 		if (line[i] == ',' && (!is_quote)) {
 			list_append(result_list, buf);
-			buf = new_string(NULL);
+			buf = new_str(NULL);
 			is_start_element = false;
 		} else {
 			is_start_element = true;
@@ -966,9 +935,9 @@ list *p__csv_parse_split_line(char *line, char **buf_con) {
 	return result_list;
 }
 
-csv_element *p__csv_parse_element(string *element) {
+element *p__csv_parse_element(string *element) {
 	// input: ['3', '3', '.', '3']
-	// return csv_element{var_type = CSV_FLOAT_, value = 33.3}
+	// return element{var_type = TFLOAT_, value = 33.3}
 
 	wchar_t *element_str = str_out(element);
 	wchar_t *endptr = NULL;
@@ -976,13 +945,13 @@ csv_element *p__csv_parse_element(string *element) {
 	int64_t int_ = wcstoll(element_str, &endptr, 10);
 	if (endptr[0] == '\0') {
 		str_free(element);
-		return csv_new_int(int_);
+		return ele_new_int(int_);
 	}
 
 	double float_ = wcstod(element_str, &endptr);
 	if (endptr[0] == '\0') {
 		str_free(element);
-		return csv_new_float(float_);
+		return ele_new_float(float_);
 	}
 
 	bool is_header = element_str[0] == '\t';
@@ -994,13 +963,12 @@ csv_element *p__csv_parse_element(string *element) {
 
 	str_replace(element, L"\"\"", L"\"", UINT32_MAX);
 	if (is_header) {
-		return csv_new_header_from_str(element);
+		return ele_new_head_from_str(element);
 	} else {
-		return csv_new_str_from_str(element);
+		return ele_new_str_from_str(element);
 	}
 
 }
-
 
 column *p__csv_parse_line(char *line, char **buf_con) {
 	// parse a line from *line to *buf_con, and return the parsed element in a list.
@@ -1016,42 +984,8 @@ column *p__csv_parse_line(char *line, char **buf_con) {
 	return list_result;
 }
 
-void csv_save_sheets(csv_table *self, uint32_t csv_sheet_count, wchar_t *sheets[], char *file_name) {
-	FILE *file_handle = fopen(file_name, "w+");
-	for (uint32_t i = 0; i < csv_sheet_count; i++) {
-		wchar_t *current_sheet_name = sheets[i];
-		sheet_write_out(csv_table_get_sheet_by_name(self, current_sheet_name), file_handle);
-	}
-	fclose(file_handle);
-}
-
-void csv_print_column(column *column) {
-	for (uint32_t i = 0; i < column->column_object.len - 1; i++) {
-		csv_element_print($(column, i));
-		printf("\t");
-	}
-	csv_element_print($(column, column->column_object.len - 1));
-	printf("\n");
-}
-
-void csv_print_sheet(sheet *self_sheet, char *index_prefix, char *index_name) {
-	if (self_sheet->element_count == 0) {
-		printf("Empty category list\n");
-		return;
-	}
-	bool is_print_index = strlen(index_prefix) && strlen(index_name);
-	if (is_print_index) {
-		printf("%s\t", index_name);
-	}
-	csv_print_column(self_sheet->sheet_titles);
-	for (uint32_t column_number = 0; column_number < self_sheet->element_count; column_number++) {
-		if (is_print_index) {
-			printf(index_prefix, column_number + 1);
-			printf("\t");
-		}
-		csv_print_column(sheet_get_column_by_index(self_sheet, column_number));
-	}
-}
+////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+//file IO
 
 bool p__check_file(const char *file_name) {
 	if (access(file_name, F_OK | R_OK | W_OK) != 0) {
@@ -1064,9 +998,9 @@ void p__create_menu_file(const char *file_name) {
 	FILE *file_handle = fopen(file_name, "w");
 	column *sheet_titles = new_column();
 
-	list_append(&sheet_titles->column_object, csv_new_str_from_wchar(L"Name"));
-	sheet *menu = sheet_create(
-			  new_string(L"MENU"),
+	list_append(&sheet_titles->column_object, ele_new_str(L"Name"));
+	sheet *menu = sheet_new(
+			  new_str(L"MENU"),
 			  sheet_titles,
 			  0
 	);
@@ -1079,36 +1013,35 @@ void p__create_order_file(const char *file_name) {
 	FILE *file_handle = fopen(file_name, "w");
 
 	column *transaction_history_sheet_titles = new_column();
-#define tmp_append_col(x__) list_append(&transaction_history_sheet_titles->column_object, csv_new_str_from_wchar(x__))
-	tmp_append_col(L"Table no.");
-	tmp_append_col(L"Payment method");
-	tmp_append_col(L"Card no.");
-	tmp_append_col(L"Card holder's name");
-	tmp_append_col(L"Amt.");
-	tmp_append_col(L"Date");
-	tmp_append_col(L"Time");
-	sheet *transaction_history = sheet_create(
-			  new_string(L"TRANSACTION_HISTORY"),
+	list_append(transaction_history_sheet_titles, ele_new_str(L"Table no."));
+	list_append(transaction_history_sheet_titles, ele_new_str(L"Payment method"));
+	list_append(transaction_history_sheet_titles, ele_new_str(L"Card no."));
+	list_append(transaction_history_sheet_titles, ele_new_str(L"Card holder's name"));
+	list_append(transaction_history_sheet_titles, ele_new_str(L"Amt."));
+	list_append(transaction_history_sheet_titles, ele_new_str(L"Date"));
+	list_append(transaction_history_sheet_titles, ele_new_str(L"Time"));
+	sheet *transaction_history = sheet_new(
+			  new_str(L"TRANSACTION_HISTORY"),
 			  transaction_history_sheet_titles,
 			  0
 	);
 	sheet_write_out(transaction_history, file_handle);
 	sheet_free(transaction_history);
 
-	sheet *password_sheet = sheet_create(
-			  new_string(L"PASSWORD"),
+	sheet *password_sheet = sheet_new(
+			  new_str(L"PASSWORD"),
 			  new_column(),
 			  0
 	);
 	column *password = new_column();
-	list_append(&password->column_object, csv_new_str_from_wchar(L"admin"));
+	list_append(&password->column_object, ele_new_str(L"admin"));
 	sheet_append(password_sheet, password);
 	sheet_write_out(password_sheet, file_handle);
 	sheet_free(password_sheet);
 	fclose(file_handle);
 }
 
-void p__csv_open(const char *file_name, csv_table *table) {
+void p__csv_open(const char *file_name, table *table) {
 	struct stat stat_;
 	if (!p__check_file(file_name)) {
 		p__create_menu_file(file_name);
@@ -1138,13 +1071,13 @@ void p__csv_open(const char *file_name, csv_table *table) {
 			col_free(my_column);
 			continue;
 		}
-		csv_element *first_element = $(my_column, 0);
-		if (first_element->var_type == CSV_HEADER) {
-			csv_table_append_sheet(table, sheet_create_from_header(my_column));
+		element *first_element = $(my_column, 0);
+		if (first_element->var_type == THEADER_) {
+			table_append_sheet(table, sheet_new_from_header(my_column));
 		} else {
 			list_pop_by_index(&my_column->column_object, 0);
 			sheet_append_by_key(table, first_element, my_column);
-			csv_element_free(first_element);
+			ele_free(first_element);
 		}
 		// end of file
 		if (buf_con[0] == '\0') {
@@ -1154,7 +1087,7 @@ void p__csv_open(const char *file_name, csv_table *table) {
 	munmap(file_ptr, stat_.st_size);
 }
 
-void csv_open(csv_table *self) {
+void csv_open(table *self) {
 	if (!p__check_file(MENU_FILE_NAME)) {
 		p__create_menu_file(MENU_FILE_NAME);
 	}
@@ -1164,6 +1097,28 @@ void csv_open(csv_table *self) {
 	p__csv_open(MENU_FILE_NAME, self);
 	p__csv_open(TRANSITION_HISTORY_FILE_NAME, self);
 }
+
+void flush_file(table *self) {
+	FILE *menu_file = fopen(MENU_FILE_NAME, "w");
+	sheet *category_sheet = table_get_sheet_by_name(self, L"MENU");
+	sheet_write_out(category_sheet, menu_file);
+	// write sub-sheets under sheet "MENU"
+	for (uint32_t i = 0; i < category_sheet->element_count; i++) {
+		wchar_t *sheet_name = str_out(sheet_get_ele_by_index(category_sheet, i, 0)->value.string_);
+		sheet_write_out(table_get_sheet_by_name(self, sheet_name), menu_file);
+		free(sheet_name);
+	}
+	fclose(menu_file);
+
+	FILE *trans_hist_file = fopen(TRANSITION_HISTORY_FILE_NAME, "w");
+	sheet *trans_hist_sheet = table_get_sheet_by_name(self, L"TRANSACTION_HISTORY");
+	sheet *password_sheet = table_get_sheet_by_name(self, L"PASSWORD");
+	sheet_write_out(trans_hist_sheet, trans_hist_file);
+	sheet_write_out(password_sheet, trans_hist_file);
+	fclose(trans_hist_file);
+}
+
+
 ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 // Utility functions:
 
@@ -1171,7 +1126,7 @@ bool input_yn_question(char *message) {
 	string *input;
 	while (true) {
 		printf("%s (y/n)?: ", message);
-		input = get_input();
+		input = str_input();
 		if (str_cmpw(input, L"y") || str_cmpw(input, L"Y")) {
 			str_free(input);
 			return true;
@@ -1197,7 +1152,7 @@ input_option_question(char *message, char *error_message, int option_number, wch
 			}
 			printf(")?: ");
 		}
-		input = get_input();
+		input = str_input();
 		for (int i = 0; i < option_number; i++) {
 			if (!str_cmpw(input, options[i])) {
 				free(input);
@@ -1218,7 +1173,7 @@ int64_t input_integer_question(char *message, char *error_message, int64_t min_v
 
 	while (true) {
 		printf("%s", message);
-		input = get_input();
+		input = str_input();
 		begin_ptr = str_out(input);
 		result = wcstoll(begin_ptr, &end_ptr, 10);
 		if (*end_ptr != '\0' || result > max_value || result < min_value || *begin_ptr == '\0') {
@@ -1232,10 +1187,10 @@ int64_t input_integer_question(char *message, char *error_message, int64_t min_v
 	}
 }
 
-csv_element *enter_number_question(char *message, char *error_message) {
+element *enter_number_question(char *message, char *error_message) {
 	while (true) {
 		printf("%s\n", message);
-		string *input = get_input();
+		string *input = str_input();
 		wchar_t *input_str = str_out(input);
 		str_free(input);
 
@@ -1244,12 +1199,12 @@ csv_element *enter_number_question(char *message, char *error_message) {
 		int64_t result_int = wcstoll(input_str, &end_ptr, 10);
 		if (end_ptr[0] == '\0') {
 			free(input_str);
-			return csv_new_int(result_int);
+			return ele_new_int(result_int);
 		}
 		double result_float = wcstod(input_str, &end_ptr);
 		if (end_ptr[0] == '\0') {
 			free(input_str);
-			return csv_new_float(result_float);
+			return ele_new_float(result_float);
 		}
 		free(input_str);
 		printf("%s\n", error_message);
@@ -1258,7 +1213,7 @@ csv_element *enter_number_question(char *message, char *error_message) {
 
 string *p__input_password() {
 	struct termios old_cfg, new_cfg;
-	string *password = new_string(L"");
+	string *password = new_str(L"");
 	int c;
 
 	tcgetattr(0, &old_cfg);
@@ -1282,200 +1237,6 @@ string *p__input_password() {
 
 	putchar('\n');
 	return password;
-}
-
-bool check_password(csv_table *self) {
-	string *input_password = p__input_password();
-	string *password =
-			  sheet_get_element_by_index(csv_table_get_sheet_by_name(self, L"PASSWORD"), 0, 0)->value.string_;
-	if (!str_cmp(password, input_password)) {
-		printf("Invalid password.\n");
-		str_free(input_password);
-		return false;
-	}
-	str_free(input_password);
-	return true;
-}
-
-void change_password(csv_table *self) {
-	INPUT_PW:
-	printf("Enter the old password: ");
-	if (!check_password(self)) {
-		if (input_yn_question("Do you want to change the password")) {
-			goto INPUT_PW;
-		} else {
-			return;
-		}
-	}
-	ENTER_NEW_PW:
-	printf("Enter new password: ");
-	string *new_password = p__input_password();
-	if (new_password->str_object.len < 5 || new_password->str_object.len > 15) {
-		printf("Password can’t be less than 5 characters and more than 15 characters.\n");
-		str_free(new_password);
-		goto ENTER_NEW_PW;
-	}
-	printf("Enter new password again: ");
-	string *new_password2 = p__input_password();
-	if (!str_cmp(new_password, new_password2)) {
-		printf("Re-entered new password and new password don’t match.\n");
-		str_free(new_password);
-		str_free(new_password2);
-		goto ENTER_NEW_PW;
-	}
-	str_free(new_password2);
-	csv_element *password = sheet_get_element_by_index(csv_table_get_sheet_by_name(self, L"PASSWORD"), 0, 0);
-	str_free(password->value.string_);
-	password->value.string_ = new_password;
-	printf("Password successfully changed.\n");
-}
-
-void add_category(csv_table *self) {
-	sheet *menu_sheet = csv_table_get_sheet_by_name(self, L"MENU");
-
-	ADD_CATEGORY:
-	printf("Enter a category name: ");
-	csv_element *category_name = csv_new_str_from_str(get_input());
-	if (category_name->value.string_->str_object.len == 0) {
-		printf("Invalid input.\n");
-		csv_element_free(category_name);
-		goto ADD_CATEGORY;
-	}
-	if (category_name->value.string_->str_object.len > 50) {
-		printf("Category name can’t be more than 50 characters.\n");
-		csv_element_free(category_name);
-		goto ADD_CATEGORY;
-	}
-	if (sheet_get_column_by_name(menu_sheet, category_name)) {
-		printf("The category you entered is already on the list.\n");
-		csv_element_free(category_name);
-		goto ADD_CATEGORY;
-	} else {
-		column *new_col = new_column();
-		list_append(&new_col->column_object, category_name);
-		sheet_append(menu_sheet, new_col);
-
-		column *food_sheet_column = new_column();
-#define tmp_append_col_add_category(x__) list_append(&food_sheet_column->column_object, csv_new_str_from_wchar(x__))
-		tmp_append_col_add_category(L"Name");
-		tmp_append_col_add_category(L"Price");
-		tmp_append_col_add_category(L"Availability");
-		tmp_append_col_add_category(L"Description");
-		sheet *food_sheet = sheet_create(
-				  str_cpy(category_name->value.string_),
-				  food_sheet_column,
-				  0
-		);
-		csv_table_append_sheet(self, food_sheet);
-
-		printf("Successfully created category.\n");
-	}
-	if (input_yn_question("Do you want to add more categories")) {
-		goto ADD_CATEGORY;
-	}
-}
-
-void delete_category(csv_table *self) {
-	sheet *menu_sheet = csv_table_get_sheet_by_name(self, L"MENU");
-	if (menu_sheet->element_count == 0) {
-		printf("Empty category list.\n");
-		return;
-	}
-	while (true) {
-		int64_t index = input_integer_question("Enter a category number:", "Invalid category number.", 1,
-		                                       menu_sheet->element_count);
-		sheet_pop_column_by_index(menu_sheet, index - 1);
-		printf("Successfully deleted.\n");
-		if (!input_yn_question("Do you want to delete more categories")) {
-			break;
-		}
-	}
-}
-
-void view_category(csv_table *self) {
-	sheet *menu_sheet = csv_table_get_sheet_by_name(self, L"MENU");
-	csv_print_sheet(menu_sheet, "%u", "Category no.");
-}
-
-void add_food_item(csv_table *self) {
-	sheet *menu_sheet = csv_table_get_sheet_by_name(self, L"MENU");
-	if (menu_sheet->element_count == 0) {
-		printf("Empty category list.\n");
-		return;
-	}
-	while (true) {
-		int64_t category_number = input_integer_question("Enter a category number:", "Invalid category number.", 1,
-		                                                 menu_sheet->element_count);
-		sheet *food_sheet = csv_table_get_sheet_by_key(self,
-		                                               sheet_get_element_by_index(menu_sheet, category_number - 1, 0));
-
-		printf("Enter food name: ");
-		csv_element *food_name = csv_new_str_from_str(get_input());
-
-		if (sheet_get_column_by_name(food_sheet, food_name)) {
-			printf("The food item already exists in the food list in the same category.\n");
-			csv_element_free(food_name);
-		} else {
-			int64_t price = input_integer_question("Enter price: ", "Invalid input.", 0, 999999999);
-			int64_t availability = input_integer_question("Enter availability: ", "Invalid input.", 0, 999999999);
-			printf("Enter a description: ");
-			string *description = get_input();
-
-			column *food_column = new_column();
-			list_append(&food_column->column_object, food_name);
-			list_append(&food_column->column_object, csv_new_int(price));
-			list_append(&food_column->column_object, csv_new_int(availability));
-			list_append(&food_column->column_object, csv_new_str_from_str(description));
-
-			sheet_append(food_sheet, food_column);
-			printf("Successfully created food record.\n");
-		}
-		if (!input_yn_question("Do you want to add more food records")) {
-			break;
-		}
-	}
-}
-
-void delete_food_item(csv_table *self) {
-	while (true) {
-		sheet *menu_sheet = csv_table_get_sheet_by_name(self, L"MENU");
-		if (menu_sheet->element_count == 0) {
-			printf("Empty category list.\n");
-			return;
-		}
-		int64_t category_number = input_integer_question("Enter a category number:", "Invalid input.", 1,
-		                                                 menu_sheet->element_count);
-		sheet *food_sheet = csv_table_get_sheet_by_key(self,
-		                                               sheet_get_element_by_index(menu_sheet, category_number - 1, 0));
-
-
-		if (food_sheet->element_count == 0) {
-			printf("Empty food list.\n");
-			return;
-		}
-		int64_t food = input_integer_question("Enter a food number:", "Invalid input.", 1, food_sheet->element_count);
-
-		sheet_pop_column_by_index(food_sheet, food - 1);
-		printf("Successfully deleted.\n");
-		if (!input_yn_question("Do you want to delete more food items")) {
-			break;
-		}
-	}
-}
-
-void view_food_items(csv_table *self) {
-	sheet *menu_sheet = csv_table_get_sheet_by_name(self, L"MENU");
-	if (menu_sheet->element_count == 0) {
-		printf("Empty category list.\n");
-		return;
-	}
-	int64_t category_number = input_integer_question("Enter a category number:", "Invalid input.", 1,
-	                                                 menu_sheet->element_count);
-	csv_element *category_name = sheet_get_element_by_index(menu_sheet, category_number - 1, 0);
-
-
-	printf("Category name: %ls\n", str_out(category_name->value.string_));
-	csv_print_sheet(csv_table_get_sheet_by_key(self, category_name), "%i", "Food no.");
 }
 
 bool p__is_valid_date(uint8_t year, uint8_t month, uint8_t day) {
@@ -1527,7 +1288,7 @@ bool p__parse_date(string *raw_date, uint8_t *year, uint8_t *month, uint8_t *day
 void p__input_date(uint8_t *year, uint8_t *month, uint8_t *day, char *msg) {
 	while (true) {
 		printf("%s", msg);
-		string *raw_input = get_input();
+		string *raw_input = str_input();
 
 		if (!p__parse_date(raw_input, year, month, day)) {
 			printf("Invalid date.\n");
@@ -1553,7 +1314,202 @@ int p__compare_date(uint8_t year1, uint8_t month1, uint8_t day1, uint8_t year2, 
 	return 0;
 }
 
-void show_transit_history(csv_table *self) {
+bool check_password(table *self) {
+	string *input_password = p__input_password();
+	string *password =
+			  sheet_get_ele_by_index(table_get_sheet_by_name(self, L"PASSWORD"), 0, 0)->value.string_;
+	if (!str_cmp(password, input_password)) {
+		printf("Invalid password.\n");
+		str_free(input_password);
+		return false;
+	}
+	str_free(input_password);
+	return true;
+}
+
+////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+// admin options:
+void change_password(table *self) {
+	INPUT_PW:
+	printf("Enter the old password: ");
+	if (!check_password(self)) {
+		if (input_yn_question("Do you want to change the password")) {
+			goto INPUT_PW;
+		} else {
+			return;
+		}
+	}
+	ENTER_NEW_PW:
+	printf("Enter new password: ");
+	string *new_password = p__input_password();
+	if (new_password->str_object.len < 5 || new_password->str_object.len > 15) {
+		printf("Password can’t be less than 5 characters and more than 15 characters.\n");
+		str_free(new_password);
+		goto ENTER_NEW_PW;
+	}
+	printf("Enter new password again: ");
+	string *new_password2 = p__input_password();
+	if (!str_cmp(new_password, new_password2)) {
+		printf("Re-entered new password and new password don’t match.\n");
+		str_free(new_password);
+		str_free(new_password2);
+		goto ENTER_NEW_PW;
+	}
+	str_free(new_password2);
+	element *password = sheet_get_ele_by_index(table_get_sheet_by_name(self, L"PASSWORD"), 0, 0);
+	str_free(password->value.string_);
+	password->value.string_ = new_password;
+	printf("Password successfully changed.\n");
+}
+
+void add_category(table *self) {
+	sheet *menu_sheet = table_get_sheet_by_name(self, L"MENU");
+
+	ADD_CATEGORY:
+	printf("Enter a category name: ");
+	element *category_name = ele_new_str_from_str(str_input());
+	if (category_name->value.string_->str_object.len == 0) {
+		printf("Invalid input.\n");
+		ele_free(category_name);
+		goto ADD_CATEGORY;
+	}
+	if (category_name->value.string_->str_object.len > 50) {
+		printf("Category name can’t be more than 50 characters.\n");
+		ele_free(category_name);
+		goto ADD_CATEGORY;
+	}
+	if (sheet_get_col_by_name(menu_sheet, category_name)) {
+		printf("The category you entered is already on the list.\n");
+		ele_free(category_name);
+		goto ADD_CATEGORY;
+	} else {
+		column *new_col = new_column();
+		list_append(&new_col->column_object, category_name);
+		sheet_append(menu_sheet, new_col);
+
+		column *food_sheet_column = new_column();
+		list_append(food_sheet_column, ele_new_str(L"Name"));
+		list_append(food_sheet_column, ele_new_str(L"Price"));
+		list_append(food_sheet_column, ele_new_str(L"Availability"));
+		list_append(food_sheet_column, ele_new_str(L"Description"));
+		sheet *food_sheet = sheet_new(
+				  str_cpy(category_name->value.string_),
+				  food_sheet_column,
+				  0
+		);
+		table_append_sheet(self, food_sheet);
+
+		printf("Successfully created category.\n");
+	}
+	if (input_yn_question("Do you want to add more categories")) {
+		goto ADD_CATEGORY;
+	}
+}
+
+void delete_category(table *self) {
+	sheet *menu_sheet = table_get_sheet_by_name(self, L"MENU");
+	if (menu_sheet->element_count == 0) {
+		printf("Empty category list.\n");
+		return;
+	}
+	while (true) {
+		int64_t index = input_integer_question("Enter a category number:", "Invalid category number.", 1,
+		                                       menu_sheet->element_count);
+		sheet_pop_by_index(menu_sheet, index - 1);
+		printf("Successfully deleted.\n");
+		if (!input_yn_question("Do you want to delete more categories")) {
+			break;
+		}
+	}
+}
+
+void view_category(table *self) {
+	sheet *menu_sheet = table_get_sheet_by_name(self, L"MENU");
+	sheet_printf(menu_sheet, "%u", "Category no.");
+}
+
+void add_food_item(table *self) {
+	sheet *menu_sheet = table_get_sheet_by_name(self, L"MENU");
+	if (menu_sheet->element_count == 0) {
+		printf("Empty category list.\n");
+		return;
+	}
+	while (true) {
+		int64_t category_number = input_integer_question("Enter a category number:", "Invalid category number.", 1,
+		                                                 menu_sheet->element_count);
+		sheet *food_sheet = table_get_sheet_by_key(self,
+		                                           sheet_get_ele_by_index(menu_sheet, category_number - 1, 0));
+
+		printf("Enter food name: ");
+		element *food_name = ele_new_str_from_str(str_input());
+
+		if (sheet_get_col_by_name(food_sheet, food_name)) {
+			printf("The food item already exists in the food list in the same category.\n");
+			ele_free(food_name);
+		} else {
+			int64_t price = input_integer_question("Enter price: ", "Invalid input.", 0, 999999999);
+			int64_t availability = input_integer_question("Enter availability: ", "Invalid input.", 0, 999999999);
+			printf("Enter a description: ");
+			string *description = str_input();
+
+			column *food_column = new_column();
+			list_append(&food_column->column_object, food_name);
+			list_append(&food_column->column_object, ele_new_int(price));
+			list_append(&food_column->column_object, ele_new_int(availability));
+			list_append(&food_column->column_object, ele_new_str_from_str(description));
+
+			sheet_append(food_sheet, food_column);
+			printf("Successfully created food record.\n");
+		}
+		if (!input_yn_question("Do you want to add more food records")) {
+			break;
+		}
+	}
+}
+
+void delete_food_item(table *self) {
+	while (true) {
+		sheet *menu_sheet = table_get_sheet_by_name(self, L"MENU");
+		if (menu_sheet->element_count == 0) {
+			printf("Empty category list.\n");
+			return;
+		}
+		int64_t category_number = input_integer_question("Enter a category number:", "Invalid input.", 1,
+		                                                 menu_sheet->element_count);
+		sheet *food_sheet = table_get_sheet_by_key(self,
+		                                           sheet_get_ele_by_index(menu_sheet, category_number - 1, 0));
+
+
+		if (food_sheet->element_count == 0) {
+			printf("Empty food list.\n");
+			return;
+		}
+		int64_t food = input_integer_question("Enter a food number:", "Invalid input.", 1, food_sheet->element_count);
+
+		sheet_pop_by_index(food_sheet, food - 1);
+		printf("Successfully deleted.\n");
+		if (!input_yn_question("Do you want to delete more food items")) {
+			break;
+		}
+	}
+}
+
+void view_food_items(table *self) {
+	sheet *menu_sheet = table_get_sheet_by_name(self, L"MENU");
+	if (menu_sheet->element_count == 0) {
+		printf("Empty category list.\n");
+		return;
+	}
+	int64_t category_number = input_integer_question("Enter a category number:", "Invalid input.", 1,
+	                                                 menu_sheet->element_count);
+	element *category_name = sheet_get_ele_by_index(menu_sheet, category_number - 1, 0);
+
+
+	printf("Category name: %ls\n", str_out(category_name->value.string_));
+	sheet_printf(table_get_sheet_by_key(self, category_name), "%i", "Food no.");
+}
+
+void show_transit_history(table *self) {
 	uint8_t year_from, year_to, month_from, month_to, day_from, day_to;
 	JMP1:
 	p__input_date(&year_from, &month_from, &day_from, "Enter start date: ");
@@ -1565,15 +1521,15 @@ void show_transit_history(csv_table *self) {
 
 	uint8_t year, month, day;
 
-	sheet *transit_sheet = csv_table_get_sheet_by_name(self, L"TRANSACTION_HISTORY");
-	csv_print_column(transit_sheet->sheet_titles);
+	sheet *transit_sheet = table_get_sheet_by_name(self, L"TRANSACTION_HISTORY");
+	col_printf(transit_sheet->sheet_titles);
 	for (uint32_t column_number = 0; column_number < transit_sheet->element_count; column_number++) {
-		wchar_t *raw_time = $(sheet_get_column_by_index(transit_sheet, column_number), 5);
+		wchar_t *raw_time = $(sheet_get_col_by_index(transit_sheet, column_number), 5);
 		swscanf(raw_time, L"%"PRIu8"/%"PRIu8"/%"PRIu8, &year, &month, &day);
 		free(raw_time);
 		if (p__compare_date(year, month, day, year_from, month_from, day_from) != 1) {
 			if (p__compare_date(year, month, day, year_to, year_to, day_to) != -1) {
-				csv_print_column(sheet_get_column_by_index(transit_sheet, column_number));
+				col_printf(sheet_get_col_by_index(transit_sheet, column_number));
 			}
 		}
 
@@ -1581,233 +1537,7 @@ void show_transit_history(csv_table *self) {
 
 }
 
-void flush_file(csv_table *self) {
-	FILE *menu_file = fopen(MENU_FILE_NAME, "w");
-	sheet *category_sheet = csv_table_get_sheet_by_name(self, L"MENU");
-	sheet_write_out(category_sheet, menu_file);
-	// write sub-sheets under sheet "MENU"
-	for (uint32_t i = 0; i < category_sheet->element_count; i++) {
-		wchar_t *sheet_name = str_out(sheet_get_element_by_index(category_sheet, i, 0)->value.string_);
-		sheet_write_out(csv_table_get_sheet_by_name(self, sheet_name), menu_file);
-		free(sheet_name);
-	}
-	fclose(menu_file);
-
-	FILE *trans_hist_file = fopen(TRANSITION_HISTORY_FILE_NAME, "w");
-	sheet *trans_hist_sheet = csv_table_get_sheet_by_name(self, L"TRANSACTION_HISTORY");
-	sheet *password_sheet = csv_table_get_sheet_by_name(self, L"PASSWORD");
-	sheet_write_out(trans_hist_sheet, trans_hist_file);
-	sheet_write_out(password_sheet, trans_hist_file);
-	fclose(trans_hist_file);
-}
-
-
-
-////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
-
-sheet *p__ordered_item_sheet_create(void) {
-	column *ordered_items_title = new_column();
-#define tmp_append_col_order_food(x__) list_append(&ordered_items_title->column_object, csv_new_str_from_wchar(x__))
-	tmp_append_col_order_food(L"Food no.");
-	tmp_append_col_order_food(L"Name");
-	tmp_append_col_order_food(L"Price");
-	tmp_append_col_order_food(L"Qty");
-	tmp_append_col_order_food(L"Description");
-
-	return sheet_create(new_string(L"ORDERED_ITEMS"), ordered_items_title, 0);
-}
-
-void p__ordered_item_sheet_append(sheet *self, column *food_column, int category_number, int food_number, int qty) {
-	wchar_t food_no[20] = L"";
-	swprintf(food_no, 20, L"%i-%i", category_number, food_number);
-	column *ordered_items_column = column_copy(food_column);
-	list_insert_by_index(&ordered_items_column->column_object, csv_new_str_from_wchar(food_no), 0);
-	val(ordered_items_column, 3).int_ = qty;
-	sheet_append(self, ordered_items_column);
-	// deduce the qty
-	val(food_column, 2).int_ -= qty;
-}
-
-void p__ordered_item_sheet_del(csv_table *self, sheet *order_sheet) {
-	GOTO1:
-	{}
-	printf("Enter the food number you want to remove from the selected list:");
-	csv_element *food_no = csv_new_str_from_str(get_input());
-	column *food_column = sheet_get_column_by_name(order_sheet, food_no);
-	if (food_column == NULL) {
-		printf("Invalid food number.\n");
-		csv_element_free(food_no);
-		goto GOTO1;
-	}
-
-	int qty = val(food_column, 3).int_;
-	int category_number, food_number;
-	wchar_t *tmp_ = str_out(food_no->value.string_);
-	swscanf(tmp_, L"%i-%i", &category_number, &food_number);
-	free(tmp_);
-	csv_element_free(food_no);
-
-	sheet_pop_column(order_sheet, food_column);
-
-	sheet *menu_sheet = csv_table_get_sheet_by_name(self, L"MENU");
-	csv_element *food_sheet_name = sheet_get_element_by_index(menu_sheet, category_number - 1, 0);
-	sheet *food_sheet = csv_table_get_sheet_by_key(self, food_sheet_name);
-	sheet_get_element_by_index(food_sheet, food_number - 1, 2)->value.int_ += qty;
-}
-
-int64_t p__ordered_item_print(sheet *self) {
-	csv_print_sheet(self, "", "");
-
-	int64_t sum = 0;
-	for (uint32_t i = 0; i < self->element_count; i++) {
-		sum += val(sheet_get_column_by_index(self, i), 2).int_ * val(sheet_get_column_by_index(self, i), 3).int_;
-	}
-	printf("Total: %li\n", sum);
-	return sum;
-}
-
-bool p__check_is_ordered(sheet *self, int category_number, int food_number) {
-	wchar_t food_no[20] = L"";
-	bool result = false;
-	swprintf(food_no, 20, L"%i-%i", category_number, food_number);
-	csv_element *tmp_ = csv_new_str_from_wchar(food_no);
-	if (sheet_get_column_by_name(self, tmp_)) {
-		result = true;
-	}
-	csv_element_free(tmp_);
-	return result;
-}
-
-void p__payment(csv_table *my_table, int table_number, uint64_t amount) {
-	bool is_cash = input_integer_question("1. Card 2. Cash (1/2)?: ", "Invalid input.", 1, 2) - 1;
-	string *card_number = NULL;
-	string *card_holder_name = NULL;
-	wchar_t *payment_method = is_cash ? L"Cash" : L"Card";
-
-	if (!is_cash) {
-		wchar_t tmp_[10] = L"";
-		swprintf(tmp_, 10, L"%li",
-		         input_integer_question("Enter card number: ", "Invalid card number.", 100000000, 999999999));
-		card_number = new_string(tmp_);
-
-		JMP1:
-		printf("Enter the card holder’s name: ");
-		card_holder_name = get_input();
-		if (card_holder_name->str_object.len == 0) {
-			printf("Invalid input.\n");
-			str_free(card_holder_name);
-			goto JMP1;
-		}
-		if (card_holder_name->str_object.len > 50) {
-			printf("Input name is more than 50 characters.\n");
-			str_free(card_holder_name);
-			goto JMP1;
-		}
-	} else {
-		card_number = new_string(L"");
-		card_holder_name = new_string(L"");
-	}
-
-	time_t unix_time;
-	struct tm *time_;
-	time(&unix_time);
-	time_ = localtime(&unix_time);
-	wchar_t local_date[9] = L"";
-	wchar_t local_time[9] = L"";
-	swprintf(local_date, 9, L"%d/%d/%d", (time_->tm_year + 1900) % 100, time_->tm_mon + 1, time_->tm_mday);
-	swprintf(local_time, 9, L"%d/%d/%d", time_->tm_hour, time_->tm_mon + 1, time_->tm_mday);
-
-	column *pay_record_column = new_column();
-	list_append(pay_record_column, csv_new_int(table_number));
-	list_append(pay_record_column, csv_new_str_from_wchar(payment_method));
-	list_append(pay_record_column, csv_new_str_from_str(card_number));
-	list_append(pay_record_column, csv_new_str_from_str(card_holder_name));
-	list_append(pay_record_column, csv_new_int((int64_t) amount));
-	list_append(pay_record_column, csv_new_str_from_wchar(local_date));
-	list_append(pay_record_column, csv_new_str_from_wchar(local_time));
-
-	sheet *payment_record_sheet = csv_table_get_sheet_by_name(my_table, L"TRANSACTION_HISTORY");
-	sheet_append(payment_record_sheet, pay_record_column);
-
-	printf("Payment successful.\n");
-}
-
-void order_food(csv_table *my_table) {
-	char sub_category_name[20] = "";
-	sheet *ordered_sheet = p__ordered_item_sheet_create();
-	sheet *category_sheet = csv_table_get_sheet_by_name(my_table, L"MENU");
-	if (category_sheet->element_count == 0){
-		printf("Empty category list\n");
-		return;
-	}
-
-	int table_number = (int) input_integer_question("Enter the table number: ", "Invalid table number.", 1, 100);
-	int64_t amount;
-
-	csv_print_sheet(category_sheet, "%i", "Category no.");
-
-	CATEGORY:
-	{
-		int category_number = (int) input_integer_question("Enter the category number: ", "Invalid category number.", 1,
-		                                                   category_sheet->element_count);
-		csv_element *category_name = sheet_get_element_by_index(category_sheet, category_number - 1, 0);
-		sheet *food_sheet = csv_table_get_sheet_by_key(my_table, category_name);
-		if (food_sheet->element_count == 0) {
-			printf("Empty food list.\n");
-			goto CATEGORY;
-		}
-		sprintf(sub_category_name, "%i-%%i", category_number);
-		csv_print_sheet(food_sheet, sub_category_name, "Category no.");
-
-		FOOD_MENU:
-		{
-			// order food
-			int food_number = (int) input_integer_question("Enter the food number: ", "Invalid food number.", 1,
-			                                               food_sheet->element_count);
-			int food_availability = (int) sheet_get_element_by_index(food_sheet, food_number - 1, 2)->value.int_;
-			if (food_availability == 0) {
-				printf("Invalid food number.\n");
-				goto FOOD_MENU;
-			}
-			if (p__check_is_ordered(ordered_sheet, category_number, food_number)) {
-				printf("You have already selected the food\n");
-			} else {
-				int food_quantity = (int) input_integer_question("Enter the food item’s quantity: ", "Invalid quantity.", 1,
-				                                                 food_availability);
-				food_availability -= food_quantity;
-				// append the ordered items
-				p__ordered_item_sheet_append(ordered_sheet, sheet_get_column_by_index(food_sheet, food_number - 1),
-				                             category_number, food_number, food_quantity);
-			}
-			if (food_availability && input_yn_question("Do you want to order more food")) {
-				goto FOOD_MENU;
-			}
-			csv_print_sheet(category_sheet, "%i", "Category no.");
-			if (input_yn_question("Do you want to explore more categories")) {
-				goto CATEGORY;
-			}
-
-			CHECK_OUT:
-			{}
-			amount = p__ordered_item_print(ordered_sheet);
-			if (!input_yn_question("Do you want to check out")) {
-				if (input_yn_question("Do you want to add to the selected food list")) {
-					csv_print_sheet(category_sheet, "%i", "Category no.");
-					goto CATEGORY;
-				}
-				if (input_yn_question("Do you want to remove from the selected food list")) {
-					p__ordered_item_sheet_del(my_table, ordered_sheet);
-					goto CHECK_OUT;
-				}
-			}
-		}
-	}
-	p__payment(my_table, table_number, amount);
-	flush_file(my_table);
-}
-
-
-void admin_section(csv_table *self) {
+void admin_section(table *self) {
 	printf("Enter the password: ");
 	if (!check_password(self)) {
 		return;
@@ -1855,7 +1585,210 @@ void admin_section(csv_table *self) {
 	}
 }
 
-void main_menu(csv_table *my_table) {
+////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+// order functions:
+sheet *p__ordered_item_sheet_create(void) {
+	column *ordered_items_title = new_column();
+	list_append(ordered_items_title, ele_new_str(L"Food no."));
+	list_append(ordered_items_title, ele_new_str(L"Name"));
+	list_append(ordered_items_title, ele_new_str(L"Price"));
+	list_append(ordered_items_title, ele_new_str(L"Qty"));
+	list_append(ordered_items_title, ele_new_str(L"Description"));
+
+	return sheet_new(new_str(L"ORDERED_ITEMS"), ordered_items_title, 0);
+}
+
+void p__ordered_item_sheet_append(sheet *self, column *food_column, int category_number, int food_number, int qty) {
+	wchar_t food_no[20] = L"";
+	swprintf(food_no, 20, L"%i-%i", category_number, food_number);
+	column *ordered_items_column = column_copy(food_column);
+	list_insert_by_index(&ordered_items_column->column_object, ele_new_str(food_no), 0);
+	val(ordered_items_column, 3).int_ = qty;
+	sheet_append(self, ordered_items_column);
+	// deduce the qty
+	val(food_column, 2).int_ -= qty;
+}
+
+void p__ordered_item_sheet_del(table *self, sheet *order_sheet) {
+	GOTO1:
+	{}
+	printf("Enter the food number you want to remove from the selected list:");
+	element *food_no = ele_new_str_from_str(str_input());
+	column *food_column = sheet_get_col_by_name(order_sheet, food_no);
+	if (food_column == NULL) {
+		printf("Invalid food number.\n");
+		ele_free(food_no);
+		goto GOTO1;
+	}
+
+	int qty = val(food_column, 3).int_;
+	int category_number, food_number;
+	wchar_t *tmp_ = str_out(food_no->value.string_);
+	swscanf(tmp_, L"%i-%i", &category_number, &food_number);
+	free(tmp_);
+	ele_free(food_no);
+
+	sheet_pop(order_sheet, food_column);
+
+	sheet *menu_sheet = table_get_sheet_by_name(self, L"MENU");
+	element *food_sheet_name = sheet_get_ele_by_index(menu_sheet, category_number - 1, 0);
+	sheet *food_sheet = table_get_sheet_by_key(self, food_sheet_name);
+	sheet_get_ele_by_index(food_sheet, food_number - 1, 2)->value.int_ += qty;
+}
+
+int64_t p__ordered_item_print(sheet *self) {
+	sheet_printf(self, "", "");
+
+	int64_t sum = 0;
+	for (uint32_t i = 0; i < self->element_count; i++) {
+		sum += val(sheet_get_col_by_index(self, i), 2).int_ * val(sheet_get_col_by_index(self, i), 3).int_;
+	}
+	printf("Total: %li\n", sum);
+	return sum;
+}
+
+bool p__check_is_ordered(sheet *self, int category_number, int food_number) {
+	wchar_t food_no[20] = L"";
+	bool result = false;
+	swprintf(food_no, 20, L"%i-%i", category_number, food_number);
+	element *tmp_ = ele_new_str(food_no);
+	if (sheet_get_col_by_name(self, tmp_)) {
+		result = true;
+	}
+	ele_free(tmp_);
+	return result;
+}
+
+void p__payment(table *my_table, int table_number, uint64_t amount) {
+	bool is_cash = input_integer_question("1. Card 2. Cash (1/2)?: ", "Invalid input.", 1, 2) - 1;
+	string *card_number = NULL;
+	string *card_holder_name = NULL;
+	wchar_t *payment_method = is_cash ? L"Cash" : L"Card";
+
+	if (!is_cash) {
+		wchar_t tmp_[10] = L"";
+		swprintf(tmp_, 10, L"%li",
+		         input_integer_question("Enter card number: ", "Invalid card number.", 100000000, 999999999));
+		card_number = new_str(tmp_);
+
+		JMP1:
+		printf("Enter the card holder’s name: ");
+		card_holder_name = str_input();
+		if (card_holder_name->str_object.len == 0) {
+			printf("Invalid input.\n");
+			str_free(card_holder_name);
+			goto JMP1;
+		}
+		if (card_holder_name->str_object.len > 50) {
+			printf("Input name is more than 50 characters.\n");
+			str_free(card_holder_name);
+			goto JMP1;
+		}
+	} else {
+		card_number = new_str(L"");
+		card_holder_name = new_str(L"");
+	}
+
+	time_t unix_time;
+	struct tm *time_;
+	time(&unix_time);
+	time_ = localtime(&unix_time);
+	wchar_t local_date[9] = L"";
+	wchar_t local_time[9] = L"";
+	swprintf(local_date, 9, L"%d/%d/%d", (time_->tm_year + 1900) % 100, time_->tm_mon + 1, time_->tm_mday);
+	swprintf(local_time, 9, L"%d/%d/%d", time_->tm_hour, time_->tm_mon + 1, time_->tm_mday);
+
+	column *pay_record_column = new_column();
+	list_append(pay_record_column, ele_new_int(table_number));
+	list_append(pay_record_column, ele_new_str(payment_method));
+	list_append(pay_record_column, ele_new_str_from_str(card_number));
+	list_append(pay_record_column, ele_new_str_from_str(card_holder_name));
+	list_append(pay_record_column, ele_new_int((int64_t) amount));
+	list_append(pay_record_column, ele_new_str(local_date));
+	list_append(pay_record_column, ele_new_str(local_time));
+
+	sheet *payment_record_sheet = table_get_sheet_by_name(my_table, L"TRANSACTION_HISTORY");
+	sheet_append(payment_record_sheet, pay_record_column);
+
+	printf("Payment successful.\n");
+}
+
+void order_food(table *my_table) {
+	char sub_category_name[20] = "";
+	sheet *ordered_sheet = p__ordered_item_sheet_create();
+	sheet *category_sheet = table_get_sheet_by_name(my_table, L"MENU");
+	if (category_sheet->element_count == 0){
+		printf("Empty category list\n");
+		return;
+	}
+
+	int table_number = (int) input_integer_question("Enter the table number: ", "Invalid table number.", 1, 100);
+	int64_t amount;
+
+	sheet_printf(category_sheet, "%i", "Category no.");
+
+	CATEGORY:
+	{
+		int category_number = (int) input_integer_question("Enter the category number: ", "Invalid category number.", 1,
+		                                                   category_sheet->element_count);
+		element *category_name = sheet_get_ele_by_index(category_sheet, category_number - 1, 0);
+		sheet *food_sheet = table_get_sheet_by_key(my_table, category_name);
+		if (food_sheet->element_count == 0) {
+			printf("Empty food list.\n");
+			goto CATEGORY;
+		}
+		sprintf(sub_category_name, "%i-%%i", category_number);
+		sheet_printf(food_sheet, sub_category_name, "Category no.");
+
+		FOOD_MENU:
+		{
+			// order food
+			int food_number = (int) input_integer_question("Enter the food number: ", "Invalid food number.", 1,
+			                                               food_sheet->element_count);
+			int food_availability = (int) sheet_get_ele_by_index(food_sheet, food_number - 1, 2)->value.int_;
+			if (food_availability == 0) {
+				printf("Invalid food number.\n");
+				goto FOOD_MENU;
+			}
+			if (p__check_is_ordered(ordered_sheet, category_number, food_number)) {
+				printf("You have already selected the food\n");
+			} else {
+				int food_quantity = (int) input_integer_question("Enter the food item’s quantity: ", "Invalid quantity.", 1,
+				                                                 food_availability);
+				food_availability -= food_quantity;
+				// append the ordered items
+				p__ordered_item_sheet_append(ordered_sheet, sheet_get_col_by_index(food_sheet, food_number - 1),
+				                             category_number, food_number, food_quantity);
+			}
+			if (food_availability && input_yn_question("Do you want to order more food")) {
+				goto FOOD_MENU;
+			}
+			sheet_printf(category_sheet, "%i", "Category no.");
+			if (input_yn_question("Do you want to explore more categories")) {
+				goto CATEGORY;
+			}
+
+			CHECK_OUT:
+			{}
+			amount = p__ordered_item_print(ordered_sheet);
+			if (!input_yn_question("Do you want to check out")) {
+				if (input_yn_question("Do you want to add to the selected food list")) {
+					sheet_printf(category_sheet, "%i", "Category no.");
+					goto CATEGORY;
+				}
+				if (input_yn_question("Do you want to remove from the selected food list")) {
+					p__ordered_item_sheet_del(my_table, ordered_sheet);
+					goto CHECK_OUT;
+				}
+			}
+		}
+	}
+	p__payment(my_table, table_number, amount);
+	flush_file(my_table);
+}
+
+////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+void main_menu(table *my_table) {
 	while (1) {
 		printf("1)  Order food\n2)  Admin section\n3)  Exit\n");
 		int64_t option = input_integer_question("Option: ", "Unknown option.", 0, 3);
@@ -1872,12 +1805,9 @@ void main_menu(csv_table *my_table) {
 	}
 }
 
-
 int main(void) {
 	setbuf(stdout, 0); // workaround for Clion debugger when running in WSL.
-	csv_table *my_table = new_csv_table();
+	table *my_table = new_table();
 	csv_open(my_table);
 	main_menu(my_table);
 }
-
-
