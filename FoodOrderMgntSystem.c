@@ -50,6 +50,9 @@
 	obtain one at https://mozilla.org/MPL/2.0/.
 */
 
+// tested compile params:
+// gcc -O3 -Wall -g -fsanitize=address -fsanitize=undefined -fsanitize-address-use-after-scope -fsanitize=leak FoodOrderMgntSystem.c
+
 #include <stdio.h>
 #include <stdlib.h>
 #include <stdint.h>
@@ -1844,11 +1847,3 @@ int main(void) {
 	table *my_table = new_table();
 	csv_open(my_table);
 	main_menu(my_table);
-
-//column * self_col = new_column();
-//	list_append(self_col, ele_new_str(L"hello"));
-//	list_append(self_col, ele_new_str(L"hello"));
-//
-//sheet * self = sheet_new(new_str(L"hello"), self_col, 0);
-//	sheet_free(self);
-}
