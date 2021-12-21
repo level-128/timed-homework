@@ -79,6 +79,7 @@ const static char *TRANSITION_HISTORY_FILE_NAME = "trans_hist.csv";
 const static int DEFAULT_DICT_SIZE = 500;
 const static double REHASH_LIMIT = 0.7;
 const static uint64_t PRIME = 51539607599;
+
 /* this prime is the first prime starting at 1 << 35 + 1 << 34.
 it is computed by using following Python code:
 
@@ -288,7 +289,8 @@ void list_pop_by_index(list *self, size_t index) {
 void list_free(list *self) {
 	node *current_element = self->first_node;
 	node *prev_element;
-	for (int i = 0; i < self->len; i++) {
+	for (int i = 0; i <= self->len; i++) { // the malloc node count is one more than the length
+		// there is an empty node after the next node.
 		prev_element = current_element;
 		current_element = current_element->next_node;
 		free(prev_element);
@@ -324,6 +326,14 @@ string *new_str(wchar_t str[]) {
 		for (uint32_t i = 0; str[i] != '\0'; i++) {
 			str_append(self, str[i]);
 		}
+	}
+	return self;
+}
+
+string *new_str_from_str(string * string_){
+	string *self = new_str(NULL);
+	for (uint32_t i = 0; i < string_->str_object.len; i++){
+		list_append(self, $(string_, i));
 	}
 	return self;
 }
@@ -478,7 +488,7 @@ element *ele_new_head_from_str(string *str_) {
 //	assert($(str_, 0) == (void *) '\t');
 	list_pop_by_index(&str_->str_object, 0); // remove leading tab
 	element *self = malloc(sizeof(element));
-	self->value.string_ = str_cpy(str_);
+	self->value.string_ = str_;
 	self->var_type = THEADER_;
 	return self;
 }
@@ -523,7 +533,7 @@ void ele_write(element *element_, FILE *stream) {
 	} else if (element_->var_type == TINT_) {
 		fprintf(stream, "%li,", element_->value.int_);
 	} else {
-		string *tmp_str = new_str(str_out(element_->value.string_));
+		string *tmp_str = new_str_from_str(element_->value.string_);
 
 		str_replace(tmp_str, L"\"", L"\"\"", UINT32_MAX);
 		str_insert_by_index(tmp_str, L"\"", 0);
@@ -619,6 +629,7 @@ uint32_t p__dict_hash(const element *key, uint32_t seed) {
 			result += (uint64_t) string_[i] << 56;
 			result %= PRIME;
 		}
+		free(string_);
 		return (result % 0xFFFFFFFF) ^ seed;
 	}
 	int64_t key_ = key->value.int_;
@@ -739,7 +750,7 @@ void dict_pop(dict *self, element *key) {
 
 // free the dictionary.
 void dict_free(dict *self) {
-
+	free(self->dict_value);
 	free(self);
 }
 
@@ -749,7 +760,7 @@ sheet *sheet_new(string *sheet_name, column *sheet_titles, uint32_t sheet_index_
 	sheet *self = malloc(sizeof(sheet));
 
 	self->element_count = 0;
-	self->sheet_name = str_cpy(sheet_name);
+	self->sheet_name = sheet_name;
 	self->sheet_titles = sheet_titles;
 	self->sheet_index_row = sheet_index_row;
 
@@ -759,8 +770,10 @@ sheet *sheet_new(string *sheet_name, column *sheet_titles, uint32_t sheet_index_
 }
 
 sheet *sheet_new_from_header(column *my_properties) {
-	string *sheet_name = val(my_properties, 0).string_;
+	string *sheet_name = str_cpy(val(my_properties, 0).string_);
 	uint32_t sheet_index_row = val(my_properties, my_properties->column_object.len - 1).int_;
+	ele_free($(my_properties, 0));
+	ele_free($(my_properties, my_properties->column_object.len - 1));
 	list_pop_by_index(&my_properties->column_object, 0);
 	list_pop_by_index(&my_properties->column_object, my_properties->column_object.len - 1);
 	sheet *ret = sheet_new(sheet_name, my_properties, sheet_index_row);
@@ -792,8 +805,8 @@ element *sheet_get_ele_by_index(sheet *self, uint32_t column, uint32_t row) {
 void sheet_pop(sheet *self, column *my_column) {
 	element *hash_element = $(my_column, self->sheet_index_row);
 	dict_pop(self->sheet_index_dict, hash_element);
-	col_free(my_column);
 	list_pop_by_node(self->sheet_element, my_column->father_node);
+	col_free(my_column);
 	self->element_count -= 1;
 }
 
@@ -852,6 +865,7 @@ void sheet_free(sheet *self) {
 	for (uint32_t i = 0; i < self->element_count; i++) {
 		col_free(sheet_get_col_by_index(self, i));
 	}
+	list_free(self->sheet_element);
 	dict_free(self->sheet_index_dict);
 	free(self);
 }
@@ -932,6 +946,7 @@ list *p__csv_parse_split_line(char *line, char **buf_con) {
 		str_free(buf);
 	}
 	*buf_con = line + i;
+
 	return result_list;
 }
 
@@ -945,17 +960,18 @@ element *p__csv_parse_element(string *element) {
 	int64_t int_ = wcstoll(element_str, &endptr, 10);
 	if (endptr[0] == '\0') {
 		str_free(element);
+		free(element_str);
 		return ele_new_int(int_);
 	}
 
 	double float_ = wcstod(element_str, &endptr);
 	if (endptr[0] == '\0') {
 		str_free(element);
+		free(element_str);
 		return ele_new_float(float_);
 	}
 
 	bool is_header = element_str[0] == '\t';
-
 	if (element_str[0 + is_header] == '"' && element_str[element->str_object.len - 1] == '"') {
 		list_pop_by_index(&element->str_object, 0 + is_header);
 		list_pop_by_index(&element->str_object, element->str_object.len - 1);
@@ -963,8 +979,11 @@ element *p__csv_parse_element(string *element) {
 
 	str_replace(element, L"\"\"", L"\"", UINT32_MAX);
 	if (is_header) {
+		free(element_str);
+
 		return ele_new_head_from_str(element);
 	} else {
+		free(element_str);
 		return ele_new_str_from_str(element);
 	}
 
@@ -981,6 +1000,7 @@ column *p__csv_parse_line(char *line, char **buf_con) {
 		list_element = list_get_node(list_line, i)->value;
 		list_append(&list_result->column_object, p__csv_parse_element(list_element));
 	}
+	list_free(list_line);
 	return list_result;
 }
 
@@ -1050,8 +1070,11 @@ void p__csv_open(const char *file_name, table *table) {
 	if (file_handle < 0) {
 		ERROR(2, "csv table load failed, ", strerror(errno));
 	}
-	if (stat(file_name, &stat_) == -1){
-		ERROR(2, "can't read the status of the file, ", strerror(errno));
+	if (stat(file_name, &stat_) == -1) {
+		ERROR(4, "can't read the status of the file: ", file_name, " reason: ", strerror(errno));
+	}
+	if (stat_.st_size == 0){
+		ERROR(3, "the file: ", file_name, " is empty. " );
 	}
 
 	char *file_ptr = mmap(NULL, stat_.st_size, PROT_READ, MAP_PRIVATE, file_handle, 0);
@@ -1100,6 +1123,9 @@ void csv_open(table *self) {
 
 void flush_file(table *self) {
 	FILE *menu_file = fopen(MENU_FILE_NAME, "w");
+	if (menu_file == NULL){
+		ERROR(4, "failed when tries to write file '", MENU_FILE_NAME, "' reason: ", strerror(errno));
+	}
 	sheet *category_sheet = table_get_sheet_by_name(self, L"MENU");
 	sheet_write_out(category_sheet, menu_file);
 	// write sub-sheets under sheet "MENU"
@@ -1111,6 +1137,9 @@ void flush_file(table *self) {
 	fclose(menu_file);
 
 	FILE *trans_hist_file = fopen(TRANSITION_HISTORY_FILE_NAME, "w");
+	if (menu_file == NULL){
+		ERROR(4, "failed when tries to write file '", TRANSITION_HISTORY_FILE_NAME, "' reason: ", strerror(errno));
+	}
 	sheet *trans_hist_sheet = table_get_sheet_by_name(self, L"TRANSACTION_HISTORY");
 	sheet *password_sheet = table_get_sheet_by_name(self, L"PASSWORD");
 	sheet_write_out(trans_hist_sheet, trans_hist_file);
@@ -1155,11 +1184,11 @@ input_option_question(char *message, char *error_message, int option_number, wch
 		input = str_input();
 		for (int i = 0; i < option_number; i++) {
 			if (!str_cmpw(input, options[i])) {
-				free(input);
+				str_free(input);
 				return options[i];
 			}
 		}
-		free(input);
+		str_free(input);
 		printf("%s\n", error_message);
 	}
 }
@@ -1182,7 +1211,8 @@ int64_t input_integer_question(char *message, char *error_message, int64_t min_v
 			free(begin_ptr);
 			continue;
 		}
-		free(input);
+		str_free(input);
+		free(begin_ptr);
 		return result;
 	}
 }
@@ -1239,7 +1269,7 @@ string *p__input_password() {
 	return password;
 }
 
-bool p__is_valid_date(uint8_t year, uint8_t month, uint8_t day) {
+bool p__is_valid_date(uint32_t year, uint8_t month, uint8_t day) {
 	year += 2000;
 	if (month > 12 || month < 1) {
 		return false;
@@ -1263,6 +1293,7 @@ bool p__parse_date(string *raw_date, uint8_t *year, uint8_t *month, uint8_t *day
 	}
 	wchar_t *raw_input_str = str_out(raw_date);
 	if (raw_input_str[2] != L'/' || raw_input_str[5] != L'/') {
+		free(raw_input_str);
 		return false;
 	}
 	raw_input_str[2] = L'\0';
@@ -1271,18 +1302,21 @@ bool p__parse_date(string *raw_date, uint8_t *year, uint8_t *month, uint8_t *day
 
 	*year = wcstoul(raw_input_str, &ptr, 10);
 	if (*ptr) {
+		free(raw_input_str);
 		return false;
 	}
 	*month = wcstoul(raw_input_str + 3, &ptr, 10);
 	if (*ptr) {
+		free(raw_input_str);
 		return false;
 	}
 	*day = wcstoul(raw_input_str + 6, &ptr, 10);
 	if (*ptr) {
+		free(raw_input_str);
 		return false;
 	}
 	free(raw_input_str);
-	return p__is_valid_date(*year, *month, *day);
+	return true;
 }
 
 void p__input_date(uint8_t *year, uint8_t *month, uint8_t *day, char *msg) {
@@ -1290,14 +1324,15 @@ void p__input_date(uint8_t *year, uint8_t *month, uint8_t *day, char *msg) {
 		printf("%s", msg);
 		string *raw_input = str_input();
 
-		if (!p__parse_date(raw_input, year, month, day)) {
+		if (!p__parse_date(raw_input, year, month, day) || !p__is_valid_date(*year, *month, *day)) {
 			printf("Invalid date.\n");
-			free(raw_input);
+			str_free(raw_input);
 			continue;
-		} else {
-			free(raw_input);
-			return;
+
 		}
+		str_free(raw_input);
+		return;
+
 	}
 }
 
@@ -1504,8 +1539,9 @@ void view_food_items(table *self) {
 	                                                 menu_sheet->element_count);
 	element *category_name = sheet_get_ele_by_index(menu_sheet, category_number - 1, 0);
 
-
-	printf("Category name: %ls\n", str_out(category_name->value.string_));
+	wchar_t * temp = str_out(category_name->value.string_);
+	printf("Category name: %ls\n", temp);
+	free(temp);
 	sheet_printf(table_get_sheet_by_key(self, category_name), "%i", "Food no.");
 }
 
@@ -1524,17 +1560,14 @@ void show_transit_history(table *self) {
 	sheet *transit_sheet = table_get_sheet_by_name(self, L"TRANSACTION_HISTORY");
 	col_printf(transit_sheet->sheet_titles);
 	for (uint32_t column_number = 0; column_number < transit_sheet->element_count; column_number++) {
-		wchar_t *raw_time = $(sheet_get_col_by_index(transit_sheet, column_number), 5);
-		swscanf(raw_time, L"%"PRIu8"/%"PRIu8"/%"PRIu8, &year, &month, &day);
-		free(raw_time);
-		if (p__compare_date(year, month, day, year_from, month_from, day_from) != 1) {
-			if (p__compare_date(year, month, day, year_to, year_to, day_to) != -1) {
+		p__parse_date(val(sheet_get_col_by_index(transit_sheet, column_number), 5).string_,
+		              &year, &month, &day);
+		if (p__compare_date(year, month, day, year_from, month_from, day_from) != -1) {
+			if (p__compare_date(year, month, day, year_to, year_to, day_to) != 1) {
 				col_printf(sheet_get_col_by_index(transit_sheet, column_number));
 			}
 		}
-
 	}
-
 }
 
 void admin_section(table *self) {
@@ -1717,7 +1750,7 @@ void order_food(table *my_table) {
 	char sub_category_name[20] = "";
 	sheet *ordered_sheet = p__ordered_item_sheet_create();
 	sheet *category_sheet = table_get_sheet_by_name(my_table, L"MENU");
-	if (category_sheet->element_count == 0){
+	if (category_sheet->element_count == 0) {
 		printf("Empty category list\n");
 		return;
 	}
@@ -1784,6 +1817,7 @@ void order_food(table *my_table) {
 		}
 	}
 	p__payment(my_table, table_number, amount);
+	sheet_free(ordered_sheet);
 	flush_file(my_table);
 }
 
@@ -1810,4 +1844,11 @@ int main(void) {
 	table *my_table = new_table();
 	csv_open(my_table);
 	main_menu(my_table);
+
+//column * self_col = new_column();
+//	list_append(self_col, ele_new_str(L"hello"));
+//	list_append(self_col, ele_new_str(L"hello"));
+//
+//sheet * self = sheet_new(new_str(L"hello"), self_col, 0);
+//	sheet_free(self);
 }
