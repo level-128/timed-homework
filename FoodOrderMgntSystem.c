@@ -1467,7 +1467,7 @@ void change_password(table *self) {
 		str_free(new_password);
 		goto ENTER_NEW_PW;
 	}
-	printf("Enter new password again: ");
+	printf("Enter the new password again: ");
 	string *new_password2 = p__input_password();
 	if (!str_cmp(new_password, new_password2)) {
 		printf("Re-entered new password and new password don’t match.\n");
