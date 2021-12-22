@@ -706,7 +706,7 @@ dict *new_dict(size_t size) {
 	dict *self = malloc(sizeof(dict));
 	self->dict_value = calloc(size, sizeof(dict_chunk));
 	self->size = size;
-	self->rand_salt = random();
+	self->rand_salt = rand();
 	return self;
 }
 
