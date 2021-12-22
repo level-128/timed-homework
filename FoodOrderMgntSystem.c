@@ -130,12 +130,12 @@ typedef struct list {
 } list;
 
 typedef struct string {
-	 list str_object;
-	 uint32_t ref_count;
+	 list str_object; // extend from list.
+	 uint32_t ref_count; // reference count object.
 } string;
 
 typedef struct element {
-	 char type;
+	 char type; // the type of the element
 	 union {
 		  int64_t int_;
 		  double float_;
@@ -161,23 +161,23 @@ typedef struct dict_chunk {
 typedef struct dict {
 	 uint32_t size; // the size of the dictionary
 	 uint32_t content_count; // how many chunk are there in the dictionary
-	 uint64_t rand_salt; // the salt of the hash function, generated per dict object.
+	 uint64_t rand_salt; // the salt of the hash function, generated per dict object, for averaging the hash table distribution.
 	 dict_chunk *dict_value;
 } dict;
 
 typedef struct sheet {
 	 string *sheet_name;
 	 uint32_t element_count;
-	 column *sheet_titles;
+	 column *sheet_titles; // Column[elements[String]]]
 	 list *sheet_element; // List[columns]
 	 // expend to
-	 // sheet_element: List[columns[csv_elements[int | float | string[w_char] ] ] ]
+	 // sheet_element: List[columns[elements[int | float | string] ] ]
 	 uint32_t sheet_index_row;
 	 dict *sheet_index_dict;
 } sheet;
 
 typedef struct table {
-	 list *table_list;
+	 list *table_list; // List[Sheet]
 	 dict *table_dict;
 } table;
 
@@ -195,6 +195,7 @@ union void_s_to_char {
 // link list
 ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 
+// create a new list
 list *new_list(void) {
 
 	list *self = malloc(sizeof(list));
@@ -210,6 +211,8 @@ list *new_list(void) {
 	return self;
 }
 
+// return the node of the list at index i.
+// to get the value of the list (aka List[i] in Python), use $(List, i).
 node *list_get_node(list *self, uint32_t index) {
 	if (index == 0) {
 		return self->first_node;
@@ -233,6 +236,7 @@ node *list_get_node(list *self, uint32_t index) {
 	return self->last_visit_node;
 }
 
+// append value into the list
 void list_append(void *self, void *newval) {
 
 	node *last_node = ((list *) self)->last_node;
@@ -247,6 +251,7 @@ void list_append(void *self, void *newval) {
 	((list *) self)->len++;
 }
 
+// insert newval before the index.
 void list_insert_by_index(list *self, void *newval, uint32_t index) {
 	node *new_node = malloc(sizeof(node));
 	new_node->value = newval;
@@ -266,6 +271,7 @@ void list_insert_by_index(list *self, void *newval, uint32_t index) {
 	}
 }
 
+// remove node node * pop_node in the list.
 void list_pop_by_node(list *self, node *pop_node) {
 	node *next_node = pop_node->next_node;
 	void *tmp_val = pop_node->value;
@@ -284,10 +290,12 @@ void list_pop_by_node(list *self, node *pop_node) {
 	free(next_node);
 }
 
+// pop the node at the index.
 void list_pop_by_index(list *self, size_t index) {
 	list_pop_by_node(self, list_get_node(self, index));
 }
 
+// free the list itself.
 void list_free(list *self) {
 	node *current_element = self->first_node;
 	node *prev_element;
@@ -305,11 +313,13 @@ void list_free(list *self) {
 // wide char str
 ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 
+// append newval into string.
 void str_append(string *self, wchar_t newval) {
 	str_conv.wchar = newval;
 	list_append(&self->str_object, str_conv.void_s);
 }
 
+// convert str[] into string. to create empty string, use new_str(NULL) or new_str(L"")
 string *new_str(wchar_t str[]) {
 	string *self = malloc(sizeof(string));
 	character *my_element = malloc(sizeof(node));
@@ -332,14 +342,16 @@ string *new_str(wchar_t str[]) {
 	return self;
 }
 
-string *new_str_from_str(string * string_){
+// create a new string by copying all the characters in string_.
+string *new_str_from_str(string *string_) {
 	string *self = new_str(NULL);
-	for (uint32_t i = 0; i < string_->str_object.len; i++){
+	for (uint32_t i = 0; i < string_->str_object.len; i++) {
 		list_append(self, $(string_, i));
 	}
 	return self;
 }
 
+// search wchar_t target[] in string, return the first occurrence, otherwise -1.
 int32_t str_search(string *self, uint32_t index, const wchar_t target[]) {
 	uint32_t target_str_len = wcslen(target);
 	uint32_t fit_len = 0;
@@ -360,6 +372,8 @@ int32_t str_search(string *self, uint32_t index, const wchar_t target[]) {
 	}
 }
 
+// insert the wchar_t *str before index.
+// ex: "hello", str = L"#", index = 1, return: "h#ello".
 void str_insert_by_index(string *self, wchar_t *str, uint32_t index) {
 	size_t str_len = wcslen(str);
 	for (uint32_t i = 0; i < str_len; i++) {
@@ -368,6 +382,8 @@ void str_insert_by_index(string *self, wchar_t *str, uint32_t index) {
 	}
 }
 
+// replace wchar_t *from to wchar_t *to, replace at most max_replace_time times.
+// ex: "hello" replace "l" to "!!" return "he!!!!o"
 void str_replace(string *self, wchar_t *from, wchar_t *to, uint32_t max_replace_time) {
 	if (!wcscmp(to, L"")) {
 		ERROR(1, "str_replace function tries to replace to an empty string.");
@@ -389,6 +405,7 @@ void str_replace(string *self, wchar_t *from, wchar_t *to, uint32_t max_replace_
 	}
 }
 
+// decrease the reference count of the string. if the reference count reachs zero, free it.
 void str_free(string *self) {
 	if (self->ref_count == 1) {
 		list_free((list *) self);
@@ -397,6 +414,7 @@ void str_free(string *self) {
 	}
 }
 
+// compare self and target
 bool str_cmpw(string *self, wchar_t *target) {
 	for (uint32_t i = 0; i < self->str_object.len; i++) {
 		str_conv.void_s = $(self, i);
@@ -407,6 +425,7 @@ bool str_cmpw(string *self, wchar_t *target) {
 	return (bool) (!target[self->str_object.len]);
 }
 
+// compare self and target
 bool str_cmp(string *self, string *target) {
 	if (self->str_object.len != target->str_object.len) {
 		return false;
@@ -419,6 +438,7 @@ bool str_cmp(string *self, string *target) {
 	return true;
 }
 
+// print the string in terminal
 void str_printf(string *self) {
 	for (uint32_t i = 0; i < self->str_object.len; i++) {
 		str_conv.void_s = ($(&self->str_object, i));
@@ -426,6 +446,7 @@ void str_printf(string *self) {
 	}
 }
 
+// return a user input string.
 string *str_input(void) {
 	string *input_list = new_str(NULL);
 	int c;
@@ -435,11 +456,13 @@ string *str_input(void) {
 	return input_list;
 }
 
+// add the reference count by 1
 string *str_cpy(string *self) {
 	self->ref_count += 1;
 	return self;
 }
 
+// convert string into wchar_t *
 wchar_t *str_out(string *self) {
 	wchar_t *my_str = malloc(sizeof(wchar_t) * (self->str_object.len + 1));
 	node *current_element = self->str_object.first_node;
@@ -457,6 +480,7 @@ wchar_t *str_out(string *self) {
 // CSV data structures:
 ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 
+// create a new element with type int
 element *ele_new_int(int64_t int_) {
 	element *self = malloc(sizeof(element));
 	self->value.int_ = int_;
@@ -464,6 +488,7 @@ element *ele_new_int(int64_t int_) {
 	return self;
 }
 
+// create a new element with type float
 element *ele_new_float(double float_) {
 	element *self = malloc(sizeof(element));
 	self->value.float_ = float_;
@@ -471,6 +496,7 @@ element *ele_new_float(double float_) {
 	return self;
 }
 
+// create a new element with type string
 element *ele_new_str(wchar_t *str_) {
 	element *self = malloc(sizeof(element));
 	string *string_ = new_str(str_);
@@ -479,6 +505,7 @@ element *ele_new_str(wchar_t *str_) {
 	return self;
 }
 
+// create a new element which points to the string *str_.
 element *ele_new_str_from_str(string *str_) {
 	element *self = malloc(sizeof(element));
 	self->value.string_ = str_;
@@ -487,6 +514,7 @@ element *ele_new_str_from_str(string *str_) {
 	return self;
 }
 
+// create a new header
 element *ele_new_head_from_str(string *str_) {
 //	assert($(str_, 0) == (void *) '\t');
 	list_pop_by_index(&str_->str_object, 0); // remove leading tab
@@ -496,6 +524,7 @@ element *ele_new_head_from_str(string *str_) {
 	return self;
 }
 
+// compare two elements
 bool ele_cmp(element *x, element *y) {
 	if (x->type != y->type) {
 		return false;
@@ -510,26 +539,24 @@ bool ele_cmp(element *x, element *y) {
 	}
 }
 
-void ele_add(element *x, element *y, element *result){
-	if (x->type == TINT_){
-		if (y->type == TINT_){
+// add elements, return x + y.
+void ele_add(element *x, element *y, element *result) {
+	if (x->type == TINT_) {
+		if (y->type == TINT_) {
 			result->value.int_ = x->value.int_ + y->value.int_;
 			result->type = TINT_;
 			return;
-		}
-		else if (y->type == TFLOAT_){
-			result->value.float_ = (double)x->value.int_ + y->value.float_;
+		} else if (y->type == TFLOAT_) {
+			result->value.float_ = (double) x->value.int_ + y->value.float_;
 			result->type = TFLOAT_;
 			return;
 		}
-	}
-	else if (x->type == TFLOAT_){
-		if (y->type == TINT_){
-			result->value.float_ = x->value.float_ + (double)y->value.int_;
+	} else if (x->type == TFLOAT_) {
+		if (y->type == TINT_) {
+			result->value.float_ = x->value.float_ + (double) y->value.int_;
 			result->type = TINT_;
 			return;
-		}
-		else if (y->type == TFLOAT_){
+		} else if (y->type == TFLOAT_) {
 			result->value.float_ = x->value.float_ + (double) y->value.float_;
 			result->type = TFLOAT_;
 			return;
@@ -538,26 +565,24 @@ void ele_add(element *x, element *y, element *result){
 	ERROR(1, "Type Error: ele_add could only add int and float object");
 }
 
-void ele_mul(element *x, element *y, element *result){
-	if (x->type == TINT_){
-		if (y->type == TINT_){
+// multiply elements, return x * y.
+void ele_mul(element *x, element *y, element *result) {
+	if (x->type == TINT_) {
+		if (y->type == TINT_) {
 			result->value.int_ = x->value.int_ * y->value.int_;
 			result->type = TINT_;
 			return;
-		}
-		else if (y->type == TFLOAT_){
-			result->value.float_ = (double)x->value.int_ * y->value.float_;
+		} else if (y->type == TFLOAT_) {
+			result->value.float_ = (double) x->value.int_ * y->value.float_;
 			result->type = TFLOAT_;
 			return;
 		}
-	}
-	else if (x->type == TFLOAT_){
-		if (y->type == TINT_){
-			result->value.float_ = x->value.float_ * (double)y->value.int_;
+	} else if (x->type == TFLOAT_) {
+		if (y->type == TINT_) {
+			result->value.float_ = x->value.float_ * (double) y->value.int_;
 			result->type = TINT_;
 			return;
-		}
-		else if (y->type == TFLOAT_){
+		} else if (y->type == TFLOAT_) {
 			result->value.float_ = x->value.float_ * (double) y->value.float_;
 			result->type = TFLOAT_;
 			return;
@@ -566,6 +591,7 @@ void ele_mul(element *x, element *y, element *result){
 	ERROR(1, "Type Error: ele_mul could only multiply int and float object");
 }
 
+// copy the element
 element *ele_cpy(element *self) {
 	element *new_element = malloc(sizeof(element));
 	memcpy(new_element, self, sizeof(element));
@@ -1133,8 +1159,8 @@ void p__csv_open(const char *file_name, table *table) {
 	if (stat(file_name, &stat_) == -1) {
 		ERROR(4, "can't read the status of the file: ", file_name, " reason: ", strerror(errno));
 	}
-	if (stat_.st_size == 0){
-		ERROR(3, "the file: ", file_name, " is empty. " );
+	if (stat_.st_size == 0) {
+		ERROR(3, "the file: ", file_name, " is empty. ");
 	}
 
 	char *file_ptr = mmap(NULL, stat_.st_size, PROT_READ, MAP_PRIVATE, file_handle, 0);
@@ -1183,7 +1209,7 @@ void csv_open(table *self) {
 
 void flush_file(table *self) {
 	FILE *menu_file = fopen(MENU_FILE_NAME, "w");
-	if (menu_file == NULL){
+	if (menu_file == NULL) {
 		ERROR(4, "failed when tries to write file '", MENU_FILE_NAME, "' reason: ", strerror(errno));
 	}
 	sheet *category_sheet = table_get_sheet_by_name(self, L"MENU");
@@ -1197,7 +1223,7 @@ void flush_file(table *self) {
 	fclose(menu_file);
 
 	FILE *trans_hist_file = fopen(TRANSITION_HISTORY_FILE_NAME, "w");
-	if (menu_file == NULL){
+	if (menu_file == NULL) {
 		ERROR(4, "failed when tries to write file '", TRANSITION_HISTORY_FILE_NAME, "' reason: ", strerror(errno));
 	}
 	sheet *trans_hist_sheet = table_get_sheet_by_name(self, L"TRANSACTION_HISTORY");
@@ -1388,7 +1414,6 @@ void p__input_date(uint8_t *year, uint8_t *month, uint8_t *day, char *msg) {
 			printf("Invalid date.\n");
 			str_free(raw_input);
 			continue;
-
 		}
 		str_free(raw_input);
 		return;
@@ -1599,7 +1624,7 @@ void view_food_items(table *self) {
 	                                                 menu_sheet->element_count);
 	element *category_name = sheet_get_ele_by_index(menu_sheet, category_number - 1, 0);
 
-	wchar_t * temp = str_out(category_name->value.string_);
+	wchar_t *temp = str_out(category_name->value.string_);
 	printf("Category name: %ls\n", temp);
 	free(temp);
 	sheet_printf(table_get_sheet_by_key(self, category_name), "%i", "Food no.");
@@ -1616,7 +1641,7 @@ void show_transit_history(table *self) {
 	}
 
 	uint8_t year, month, day;
-
+	element *total = ele_new_float(0.0);
 	sheet *transit_sheet = table_get_sheet_by_name(self, L"TRANSACTION_HISTORY");
 	col_printf(transit_sheet->sheet_titles);
 	for (uint32_t column_number = 0; column_number < transit_sheet->element_count; column_number++) {
@@ -1625,9 +1650,14 @@ void show_transit_history(table *self) {
 		if (p__compare_date(year, month, day, year_from, month_from, day_from) != -1) {
 			if (p__compare_date(year, month, day, year_to, year_to, day_to) != 1) {
 				col_printf(sheet_get_col_by_index(transit_sheet, column_number));
+				ele_add($(sheet_get_col_by_index(transit_sheet, column_number), 4), total, total);
 			}
 		}
 	}
+	printf("Total amount: ");
+	ele_printf(total);
+	printf("\n");
+	ele_free(total);
 }
 
 void admin_section(table *self) {
@@ -1645,8 +1675,7 @@ void admin_section(table *self) {
 		       "7. Show transaction history\n"
 		       "8. Change password\n"
 		       "9. Exit\n");
-		int64_t option = input_integer_question("Option:", "Unknown option.", 1, 9);
-		switch (option) {
+		switch (input_integer_question("Option:", "Unknown option.", 1, 9)) {
 			case 1:
 				add_category(self);
 				break;
