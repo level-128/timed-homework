@@ -44,7 +44,6 @@
 	along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
 
-
 	This Source Code Form is subject to the terms of the Mozilla Public License,
 	v. 2.0. If a copy of the MPL was not distributed with this file, You can
 	obtain one at https://mozilla.org/MPL/2.0/.
@@ -70,8 +69,8 @@
 #include <stdarg.h>
 
 
-#define $(list__, index__) list_get_node((list *)list__, index__)->value
-#define val(list__, index__) (((element *)(list_get_node((list *)list__, index__)->value))->value)
+#define $(list__, index__) list_get_node((list *)(list__), index__)->value
+#define val(list__, index__) (((element *)(list_get_node((list *)(list__), index__)->value))->value)
 #define TINT_ 1
 #define TFLOAT_ 2
 #define TSTRING_ 3
@@ -136,7 +135,7 @@ typedef struct string {
 } string;
 
 typedef struct element {
-	 char var_type;
+	 char type;
 	 union {
 		  int64_t int_;
 		  double float_;
@@ -303,7 +302,7 @@ void list_free(list *self) {
 
 
 ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
-// Unicode str;
+// wide char str
 ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 
 void str_append(string *self, wchar_t newval) {
@@ -461,14 +460,14 @@ wchar_t *str_out(string *self) {
 element *ele_new_int(int64_t int_) {
 	element *self = malloc(sizeof(element));
 	self->value.int_ = int_;
-	self->var_type = TINT_;
+	self->type = TINT_;
 	return self;
 }
 
 element *ele_new_float(double float_) {
 	element *self = malloc(sizeof(element));
 	self->value.float_ = float_;
-	self->var_type = TFLOAT_;
+	self->type = TFLOAT_;
 	return self;
 }
 
@@ -476,14 +475,15 @@ element *ele_new_str(wchar_t *str_) {
 	element *self = malloc(sizeof(element));
 	string *string_ = new_str(str_);
 	self->value.string_ = string_;
-	self->var_type = TSTRING_;
+	self->type = TSTRING_;
 	return self;
 }
 
 element *ele_new_str_from_str(string *str_) {
 	element *self = malloc(sizeof(element));
 	self->value.string_ = str_;
-	self->var_type = TSTRING_;
+	self->type = TSTRING_;
+
 	return self;
 }
 
@@ -492,38 +492,93 @@ element *ele_new_head_from_str(string *str_) {
 	list_pop_by_index(&str_->str_object, 0); // remove leading tab
 	element *self = malloc(sizeof(element));
 	self->value.string_ = str_;
-	self->var_type = THEADER_;
+	self->type = THEADER_;
 	return self;
 }
 
 bool ele_cmp(element *x, element *y) {
-	if (x->var_type != y->var_type) {
+	if (x->type != y->type) {
 		return false;
 	}
 	if (x->value.int_ == y->value.int_) {
 		return true; // comparing the memory as if they are int.
 	}
-	if (x->var_type == TSTRING_) {
+	if (x->type == TSTRING_) {
 		return str_cmp(x->value.string_, y->value.string_);
 	} else {
 		return false;
 	}
+}
 
+void ele_add(element *x, element *y, element *result){
+	if (x->type == TINT_){
+		if (y->type == TINT_){
+			result->value.int_ = x->value.int_ + y->value.int_;
+			result->type = TINT_;
+			return;
+		}
+		else if (y->type == TFLOAT_){
+			result->value.float_ = (double)x->value.int_ + y->value.float_;
+			result->type = TFLOAT_;
+			return;
+		}
+	}
+	else if (x->type == TFLOAT_){
+		if (y->type == TINT_){
+			result->value.float_ = x->value.float_ + (double)y->value.int_;
+			result->type = TINT_;
+			return;
+		}
+		else if (y->type == TFLOAT_){
+			result->value.float_ = x->value.float_ + (double) y->value.float_;
+			result->type = TFLOAT_;
+			return;
+		}
+	}
+	ERROR(1, "Type Error: ele_add could only add int and float object");
+}
+
+void ele_mul(element *x, element *y, element *result){
+	if (x->type == TINT_){
+		if (y->type == TINT_){
+			result->value.int_ = x->value.int_ * y->value.int_;
+			result->type = TINT_;
+			return;
+		}
+		else if (y->type == TFLOAT_){
+			result->value.float_ = (double)x->value.int_ * y->value.float_;
+			result->type = TFLOAT_;
+			return;
+		}
+	}
+	else if (x->type == TFLOAT_){
+		if (y->type == TINT_){
+			result->value.float_ = x->value.float_ * (double)y->value.int_;
+			result->type = TINT_;
+			return;
+		}
+		else if (y->type == TFLOAT_){
+			result->value.float_ = x->value.float_ * (double) y->value.float_;
+			result->type = TFLOAT_;
+			return;
+		}
+	}
+	ERROR(1, "Type Error: ele_mul could only multiply int and float object");
 }
 
 element *ele_cpy(element *self) {
 	element *new_element = malloc(sizeof(element));
 	memcpy(new_element, self, sizeof(element));
-	if (self->var_type == TSTRING_ || self->var_type == THEADER_) {
+	if (self->type == TSTRING_ || self->type == THEADER_) {
 		str_cpy(self->value.string_);
 	}
 	return new_element;
 }
 
 void ele_printf(element *element_) {
-	if (element_->var_type == TFLOAT_) {
-		printf("%lf", element_->value.float_);
-	} else if (element_->var_type == TINT_) {
+	if (element_->type == TFLOAT_) {
+		printf("%.2lf", element_->value.float_);
+	} else if (element_->type == TINT_) {
 		printf("%li", element_->value.int_);
 	} else {
 		str_printf(element_->value.string_);
@@ -531,9 +586,9 @@ void ele_printf(element *element_) {
 }
 
 void ele_write(element *element_, FILE *stream) {
-	if (element_->var_type == TFLOAT_) {
+	if (element_->type == TFLOAT_) {
 		fprintf(stream, "%lf,", element_->value.float_);
-	} else if (element_->var_type == TINT_) {
+	} else if (element_->type == TINT_) {
 		fprintf(stream, "%li,", element_->value.int_);
 	} else {
 		string *tmp_str = new_str_from_str(element_->value.string_);
@@ -543,7 +598,7 @@ void ele_write(element *element_, FILE *stream) {
 		str_append(tmp_str, L'\"');
 		wchar_t *tmp_ = str_out(tmp_str);
 		str_free(tmp_str);
-		if (element_->var_type == THEADER_) {
+		if (element_->type == THEADER_) {
 			fprintf(stream, "\t%ls,", tmp_);
 		} else {
 			fprintf(stream, "%ls,", tmp_);
@@ -553,7 +608,7 @@ void ele_write(element *element_, FILE *stream) {
 }
 
 void ele_free(element *self) {
-	if (self->var_type == TSTRING_) {
+	if (self->type == TSTRING_) {
 		str_free(self->value.string_);
 	}
 	free(self);
@@ -622,7 +677,7 @@ void dict_store(dict *self, element *key, void *value);
 
 
 uint32_t p__dict_hash(const element *key, uint32_t seed) {
-	if (key->var_type == TSTRING_) {
+	if (key->type == TSTRING_) {
 		wchar_t *string_ = str_out(key->value.string_);
 		uint64_t result = 0;
 		for (uint32_t i = 0;; i++) {
@@ -808,7 +863,7 @@ element *sheet_get_ele_by_index(sheet *self, uint32_t column, uint32_t row) {
 void sheet_pop(sheet *self, column *my_column) {
 	element *hash_element = $(my_column, self->sheet_index_row);
 	dict_pop(self->sheet_index_dict, hash_element);
-	list_pop_by_node(self->sheet_element, my_column->father_node);
+	list_pop_by_node(self->sheet_element, my_column->father_node); // pop the column which stores in self->sheet_element
 	col_free(my_column);
 	self->element_count -= 1;
 }
@@ -843,10 +898,12 @@ void sheet_printf(sheet *self_sheet, char *index_prefix, char *index_name) {
 }
 
 void sheet_write_out(sheet *self, FILE *stream) {
-	element *sheet_name = ele_new_str_from_str(self->sheet_name);
-	sheet_name->var_type = THEADER_;
+	element *sheet_name = ele_new_str_from_str(str_cpy(self->sheet_name));
+	// the self->sheet_name is a single string, and for printing the sheet_name, we need to create an element string
+	// contains the sheet_name, and use it to print, then free it.
+	sheet_name->type = THEADER_;
 	ele_write(sheet_name, stream);
-	sheet_name->var_type = TSTRING_;
+	sheet_name->type = TSTRING_;
 
 	// write sheet_titles by adding index row at the end of the column.
 	element *tmp_ = ele_new_int(self->sheet_index_row);
@@ -856,7 +913,7 @@ void sheet_write_out(sheet *self, FILE *stream) {
 	list_pop_by_index(&self->sheet_titles->column_object, self->sheet_titles->column_object.len - 1);
 
 	for (uint32_t i = 0; i < self->element_count; i++) {
-		ele_write(sheet_name, stream);
+		ele_write(sheet_name, stream); // write the column title;
 		col_write_out($(self->sheet_element, i), stream);
 	}
 	ele_free(sheet_name);
@@ -955,7 +1012,7 @@ list *p__csv_parse_split_line(char *line, char **buf_con) {
 
 element *p__csv_parse_element(string *element) {
 	// input: ['3', '3', '.', '3']
-	// return element{var_type = TFLOAT_, value = 33.3}
+	// return element{type = TFLOAT_, value = 33.3}
 
 	wchar_t *element_str = str_out(element);
 	wchar_t *endptr = NULL;
@@ -1000,8 +1057,8 @@ column *p__csv_parse_line(char *line, char **buf_con) {
 	string *list_element;
 
 	for (int i = 0; i < list_line->len; i++) {
-		list_element = list_get_node(list_line, i)->value;
-		list_append(&list_result->column_object, p__csv_parse_element(list_element));
+		list_element = $(list_line, i);
+		list_append(list_result, p__csv_parse_element(list_element));
 	}
 	list_free(list_line);
 	return list_result;
@@ -1057,7 +1114,7 @@ void p__create_order_file(const char *file_name) {
 			  0
 	);
 	column *password = new_column();
-	list_append(&password->column_object, ele_new_str(L"admin"));
+	list_append(password, ele_new_str(L"admin"));
 	sheet_append(password_sheet, password);
 	sheet_write_out(password_sheet, file_handle);
 	sheet_free(password_sheet);
@@ -1098,7 +1155,7 @@ void p__csv_open(const char *file_name, table *table) {
 			continue;
 		}
 		element *first_element = $(my_column, 0);
-		if (first_element->var_type == THEADER_) {
+		if (first_element->type == THEADER_) {
 			table_append_sheet(table, sheet_new_from_header(my_column));
 		} else {
 			list_pop_by_index(&my_column->column_object, 0);
@@ -1220,7 +1277,7 @@ int64_t input_integer_question(char *message, char *error_message, int64_t min_v
 	}
 }
 
-element *enter_number_question(char *message, char *error_message) {
+element *input_number_question(char *message, char *error_message) {
 	while (true) {
 		printf("%s\n", message);
 		string *input = str_input();
@@ -1485,14 +1542,14 @@ void add_food_item(table *self) {
 			printf("The food item already exists in the food list in the same category.\n");
 			ele_free(food_name);
 		} else {
-			int64_t price = input_integer_question("Enter price: ", "Invalid input.", 0, 999999999);
+			element *price = input_number_question("Enter price: ", "Invalid input");
 			int64_t availability = input_integer_question("Enter availability: ", "Invalid input.", 0, 999999999);
 			printf("Enter a description: ");
 			string *description = str_input();
 
 			column *food_column = new_column();
 			list_append(&food_column->column_object, food_name);
-			list_append(&food_column->column_object, ele_new_int(price));
+			list_append(&food_column->column_object, price);
 			list_append(&food_column->column_object, ele_new_int(availability));
 			list_append(&food_column->column_object, ele_new_str_from_str(description));
 
@@ -1672,14 +1729,19 @@ void p__ordered_item_sheet_del(table *self, sheet *order_sheet) {
 	sheet_get_ele_by_index(food_sheet, food_number - 1, 2)->value.int_ += qty;
 }
 
-int64_t p__ordered_item_print(sheet *self) {
+element *p__ordered_item_print(sheet *self) {
 	sheet_printf(self, "", "");
 
-	int64_t sum = 0;
+	element *sum = ele_new_float(0.0);
+	element *tmp1 = ele_new_int(0);
 	for (uint32_t i = 0; i < self->element_count; i++) {
-		sum += val(sheet_get_col_by_index(self, i), 2).int_ * val(sheet_get_col_by_index(self, i), 3).int_;
+		ele_mul($(sheet_get_col_by_index(self, i), 3), $(sheet_get_col_by_index(self, i), 2), tmp1);
+		ele_add(tmp1, sum, sum);
 	}
-	printf("Total: %li\n", sum);
+	ele_free(tmp1);
+	printf("Total: ");
+	ele_printf(sum);
+	printf("\n");
 	return sum;
 }
 
@@ -1695,7 +1757,7 @@ bool p__check_is_ordered(sheet *self, int category_number, int food_number) {
 	return result;
 }
 
-void p__payment(table *my_table, int table_number, uint64_t amount) {
+void p__payment(table *my_table, int table_number, element *amount) {
 	bool is_cash = input_integer_question("1. Card 2. Cash (1/2)?: ", "Invalid input.", 1, 2) - 1;
 	string *card_number = NULL;
 	string *card_holder_name = NULL;
@@ -1739,7 +1801,7 @@ void p__payment(table *my_table, int table_number, uint64_t amount) {
 	list_append(pay_record_column, ele_new_str(payment_method));
 	list_append(pay_record_column, ele_new_str_from_str(card_number));
 	list_append(pay_record_column, ele_new_str_from_str(card_holder_name));
-	list_append(pay_record_column, ele_new_int((int64_t) amount));
+	list_append(pay_record_column, amount);
 	list_append(pay_record_column, ele_new_str(local_date));
 	list_append(pay_record_column, ele_new_str(local_time));
 
@@ -1750,7 +1812,7 @@ void p__payment(table *my_table, int table_number, uint64_t amount) {
 }
 
 void order_food(table *my_table) {
-	char sub_category_name[20] = "";
+	element *amount;
 	sheet *ordered_sheet = p__ordered_item_sheet_create();
 	sheet *category_sheet = table_get_sheet_by_name(my_table, L"MENU");
 	if (category_sheet->element_count == 0) {
@@ -1759,8 +1821,6 @@ void order_food(table *my_table) {
 	}
 
 	int table_number = (int) input_integer_question("Enter the table number: ", "Invalid table number.", 1, 100);
-	int64_t amount;
-
 	sheet_printf(category_sheet, "%i", "Category no.");
 
 	CATEGORY:
@@ -1773,8 +1833,7 @@ void order_food(table *my_table) {
 			printf("Empty food list.\n");
 			goto CATEGORY;
 		}
-		sprintf(sub_category_name, "%i-%%i", category_number);
-		sheet_printf(food_sheet, sub_category_name, "Category no.");
+		sheet_printf(food_sheet, "%i", "Food no.");
 
 		FOOD_MENU:
 		{
