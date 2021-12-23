@@ -64,17 +64,23 @@
 #include <memory.h>
 #include <termios.h>
 #include <time.h>
-#include <inttypes.h>
+#include <signal.h>
 #include <errno.h>
 #include <stdarg.h>
+#include <setjmp.h>
 
 
 #define $(list__, index__) list_get_node((list *)(list__), index__)->value
 #define val(list__, index__) (((element *)(list_get_node((list *)(list__), index__)->value))->value)
+#define type(x__) x__->type
+#define len(x__) x__->list_object.len
+
 #define TINT_ 1
 #define TFLOAT_ 2
 #define TSTRING_ 3
 #define THEADER_ 4
+
+jmp_buf JMP;
 
 const static char *MENU_FILE_NAME = "menu.csv";
 const static char *TRANSITION_HISTORY_FILE_NAME = "trans_hist.csv";
@@ -99,11 +105,13 @@ make sure your system has sympy installed. if not, run 'pip install sympy' in yo
 void ERROR(int arg_count, ...) {
 	va_list args;
 	va_start(args, arg_count);
+	printf("\033[0;31m");
 	printf("\nERROR -- ");
 	for (uint32_t i = 0; i < arg_count; i++) {
 		printf("%s", va_arg(args, char *));
 	}
-	printf("\n\tPress enter to exit. ");
+
+	printf("\033[0m\n\tPress enter to exit. ");
 	while (1) {
 		if (getchar() == '\n') {
 			break;
@@ -130,7 +138,7 @@ typedef struct list {
 } list;
 
 typedef struct string {
-	 list str_object; // extend from list.
+	 list list_object; // extend from list.
 	 uint32_t ref_count; // reference count object.
 } string;
 
@@ -144,7 +152,7 @@ typedef struct element {
 } element;
 
 typedef struct column {
-	 list column_object;
+	 list list_object;
 	 node *father_node;
 } column;
 
@@ -166,9 +174,9 @@ typedef struct dict {
 } dict;
 
 typedef struct sheet {
-	 string *sheet_name;
-	 uint32_t element_count;
-	 column *sheet_titles; // Column[elements[String]]]
+	 string *name;
+	 uint32_t len;
+	 column *titles; // Column[elements[String]]]
 	 list *sheet_element; // List[columns]
 	 // expend to
 	 // sheet_element: List[columns[elements[int | float | string] ] ]
@@ -316,7 +324,7 @@ void list_free(list *self) {
 // append newval into string.
 void str_append(string *self, wchar_t newval) {
 	str_conv.wchar = newval;
-	list_append(&self->str_object, str_conv.void_s);
+	list_append(&self->list_object, str_conv.void_s);
 }
 
 // convert str[] into string. to create empty string, use new_str(NULL) or new_str(L"")
@@ -325,14 +333,14 @@ string *new_str(wchar_t str[]) {
 	character *my_element = malloc(sizeof(node));
 	self->ref_count = 1;
 
-	self->str_object.first_node = my_element;
-	self->str_object.last_node = my_element;
-	self->str_object.len = 0;
+	self->list_object.first_node = my_element;
+	self->list_object.last_node = my_element;
+	len(self) = 0;
 
-	self->str_object.last_visit_node_index = 0;
-	self->str_object.last_visit_node = my_element;
+	self->list_object.last_visit_node_index = 0;
+	self->list_object.last_visit_node = my_element;
 
-	my_element->next_node = self->str_object.first_node;
+	my_element->next_node = self->list_object.first_node;
 
 	if (str) {
 		for (uint32_t i = 0; str[i] != '\0'; i++) {
@@ -345,7 +353,7 @@ string *new_str(wchar_t str[]) {
 // create a new string by copying all the characters in string_.
 string *new_str_from_str(string *string_) {
 	string *self = new_str(NULL);
-	for (uint32_t i = 0; i < string_->str_object.len; i++) {
+	for (uint32_t i = 0; i < len(string_); i++) {
 		list_append(self, $(string_, i));
 	}
 	return self;
@@ -355,7 +363,7 @@ string *new_str_from_str(string *string_) {
 int32_t str_search(string *self, uint32_t index, const wchar_t target[]) {
 	uint32_t target_str_len = wcslen(target);
 	uint32_t fit_len = 0;
-	for (; index < self->str_object.len; index++) {
+	for (; index < len(self); index++) {
 		if (fit_len == target_str_len) {
 			return (int32_t) (index - fit_len);
 		}
@@ -378,7 +386,7 @@ void str_insert_by_index(string *self, wchar_t *str, uint32_t index) {
 	size_t str_len = wcslen(str);
 	for (uint32_t i = 0; i < str_len; i++) {
 		str_conv.wchar = str[i];
-		list_insert_by_index(&self->str_object, str_conv.void_s, index + i);
+		list_insert_by_index(&self->list_object, str_conv.void_s, index + i);
 	}
 }
 
@@ -398,7 +406,7 @@ void str_replace(string *self, wchar_t *from, wchar_t *to, uint32_t max_replace_
 		}
 
 		for (int i = 0; i < char_from_len; i++) {
-			list_pop_by_node(&self->str_object, list_get_node(&self->str_object, index));
+			list_pop_by_node(&self->list_object, list_get_node(&self->list_object, index));
 		}
 		str_insert_by_index(self, to, index);
 		index += char_to_len - char_from_len + 1;
@@ -416,21 +424,21 @@ void str_free(string *self) {
 
 // compare self and target
 bool str_cmpw(string *self, wchar_t *target) {
-	for (uint32_t i = 0; i < self->str_object.len; i++) {
+	for (uint32_t i = 0; i < len(self); i++) {
 		str_conv.void_s = $(self, i);
 		if (str_conv.wchar != target[i]) {
 			return false;
 		}
 	}
-	return (bool) (!target[self->str_object.len]);
+	return (bool) (!target[len(self)]);
 }
 
 // compare self and target
 bool str_cmp(string *self, string *target) {
-	if (self->str_object.len != target->str_object.len) {
+	if (len(self) != len(target)) {
 		return false;
 	}
-	for (uint32_t i = 0; i < self->str_object.len; i++) {
+	for (uint32_t i = 0; i < len(self); i++) {
 		if ($(self, i) != $(target, i)) {
 			return false;
 		}
@@ -440,14 +448,14 @@ bool str_cmp(string *self, string *target) {
 
 // print the string in terminal
 void str_printf(string *self) {
-	for (uint32_t i = 0; i < self->str_object.len; i++) {
-		str_conv.void_s = ($(&self->str_object, i));
+	for (uint32_t i = 0; i < len(self); i++) {
+		str_conv.void_s = ($(&self->list_object, i));
 		putwchar(str_conv.wchar);
 	}
 }
 
 // return a user input string.
-string *str_input(char * prompt) {
+string *str_input(char *prompt) {
 	printf("%s", prompt);
 	string *input_list = new_str(NULL);
 	int c;
@@ -465,15 +473,15 @@ string *str_cpy(string *self) {
 
 // convert string into wchar_t *
 wchar_t *str_out(string *self) {
-	wchar_t *my_str = malloc(sizeof(wchar_t) * (self->str_object.len + 1));
-	node *current_element = self->str_object.first_node;
+	wchar_t *my_str = malloc(sizeof(wchar_t) * (len(self) + 1));
+	node *current_element = self->list_object.first_node;
 
-	for (size_t i = 0; i < self->str_object.len; i++) {
+	for (size_t i = 0; i < len(self); i++) {
 		void_s_to_char.void_s = current_element->value;
 		my_str[i] = (unsigned char) void_s_to_char.char_;
 		current_element = current_element->next_node;
 	}
-	my_str[self->str_object.len] = '\0';
+	my_str[len(self)] = '\0';
 	return my_str;
 }
 
@@ -485,7 +493,7 @@ wchar_t *str_out(string *self) {
 element *ele_new_int(int64_t int_) {
 	element *self = malloc(sizeof(element));
 	self->value.int_ = int_;
-	self->type = TINT_;
+	type(self) = TINT_;
 	return self;
 }
 
@@ -493,7 +501,7 @@ element *ele_new_int(int64_t int_) {
 element *ele_new_float(double float_) {
 	element *self = malloc(sizeof(element));
 	self->value.float_ = float_;
-	self->type = TFLOAT_;
+	type(self) = TFLOAT_;
 	return self;
 }
 
@@ -502,7 +510,7 @@ element *ele_new_str(wchar_t *str_) {
 	element *self = malloc(sizeof(element));
 	string *string_ = new_str(str_);
 	self->value.string_ = string_;
-	self->type = TSTRING_;
+	type(self) = TSTRING_;
 	return self;
 }
 
@@ -510,30 +518,29 @@ element *ele_new_str(wchar_t *str_) {
 element *ele_new_str_from_str(string *str_) {
 	element *self = malloc(sizeof(element));
 	self->value.string_ = str_;
-	self->type = TSTRING_;
-
+	type(self) = TSTRING_;
 	return self;
 }
 
 // create a new header
 element *ele_new_head_from_str(string *str_) {
 //	assert($(str_, 0) == (void *) '\t');
-	list_pop_by_index(&str_->str_object, 0); // remove leading tab
+	list_pop_by_index(&str_->list_object, 0); // remove leading tab
 	element *self = malloc(sizeof(element));
 	self->value.string_ = str_;
-	self->type = THEADER_;
+	type(self) = THEADER_;
 	return self;
 }
 
 // compare two elements
 bool ele_cmp(element *x, element *y) {
-	if (x->type != y->type) {
+	if (type(x) != type(y)) {
 		return false;
 	}
 	if (x->value.int_ == y->value.int_) {
 		return true; // comparing the memory as if they are int.
 	}
-	if (x->type == TSTRING_) {
+	if (type(x) == TSTRING_) {
 		return str_cmp(x->value.string_, y->value.string_);
 	} else {
 		return false;
@@ -542,24 +549,24 @@ bool ele_cmp(element *x, element *y) {
 
 // add elements, return x + y.
 void ele_add(element *x, element *y, element *result) {
-	if (x->type == TINT_) {
-		if (y->type == TINT_) {
+	if (type(x) == TINT_) {
+		if (type(y) == TINT_) {
 			result->value.int_ = x->value.int_ + y->value.int_;
-			result->type = TINT_;
+			type(result) = TINT_;
 			return;
-		} else if (y->type == TFLOAT_) {
+		} else if (type(y) == TFLOAT_) {
 			result->value.float_ = (double) x->value.int_ + y->value.float_;
-			result->type = TFLOAT_;
+			type(result) = TFLOAT_;
 			return;
 		}
-	} else if (x->type == TFLOAT_) {
-		if (y->type == TINT_) {
+	} else if (type(x) == TFLOAT_) {
+		if (type(y) == TINT_) {
 			result->value.float_ = x->value.float_ + (double) y->value.int_;
-			result->type = TINT_;
+			type(result) = TINT_;
 			return;
-		} else if (y->type == TFLOAT_) {
+		} else if (type(y) == TFLOAT_) {
 			result->value.float_ = x->value.float_ + (double) y->value.float_;
-			result->type = TFLOAT_;
+			type(result) = TFLOAT_;
 			return;
 		}
 	}
@@ -568,24 +575,24 @@ void ele_add(element *x, element *y, element *result) {
 
 // multiply elements, return x * y.
 void ele_mul(element *x, element *y, element *result) {
-	if (x->type == TINT_) {
-		if (y->type == TINT_) {
+	if (type(x) == TINT_) {
+		if (type(y) == TINT_) {
 			result->value.int_ = x->value.int_ * y->value.int_;
-			result->type = TINT_;
+			type(result) = TINT_;
 			return;
-		} else if (y->type == TFLOAT_) {
+		} else if (type(y) == TFLOAT_) {
 			result->value.float_ = (double) x->value.int_ * y->value.float_;
-			result->type = TFLOAT_;
+			type(result) = TFLOAT_;
 			return;
 		}
-	} else if (x->type == TFLOAT_) {
-		if (y->type == TINT_) {
+	} else if (type(x) == TFLOAT_) {
+		if (type(y) == TINT_) {
 			result->value.float_ = x->value.float_ * (double) y->value.int_;
-			result->type = TINT_;
+			type(result) = TINT_;
 			return;
-		} else if (y->type == TFLOAT_) {
+		} else if (type(y) == TFLOAT_) {
 			result->value.float_ = x->value.float_ * (double) y->value.float_;
-			result->type = TFLOAT_;
+			type(result) = TFLOAT_;
 			return;
 		}
 	}
@@ -596,16 +603,16 @@ void ele_mul(element *x, element *y, element *result) {
 element *ele_cpy(element *self) {
 	element *new_element = malloc(sizeof(element));
 	memcpy(new_element, self, sizeof(element));
-	if (self->type == TSTRING_ || self->type == THEADER_) {
+	if (type(self) == TSTRING_ || type(self) == THEADER_) {
 		str_cpy(self->value.string_);
 	}
 	return new_element;
 }
 
 void ele_printf(element *element_) {
-	if (element_->type == TFLOAT_) {
+	if (type(element_) == TFLOAT_) {
 		printf("%.2lf", element_->value.float_);
-	} else if (element_->type == TINT_) {
+	} else if (type(element_) == TINT_) {
 		printf("%li", element_->value.int_);
 	} else {
 		str_printf(element_->value.string_);
@@ -613,9 +620,9 @@ void ele_printf(element *element_) {
 }
 
 void ele_write(element *element_, FILE *stream) {
-	if (element_->type == TFLOAT_) {
+	if (type(element_) == TFLOAT_) {
 		fprintf(stream, "%lf,", element_->value.float_);
-	} else if (element_->type == TINT_) {
+	} else if (type(element_) == TINT_) {
 		fprintf(stream, "%li,", element_->value.int_);
 	} else {
 		string *tmp_str = new_str_from_str(element_->value.string_);
@@ -625,7 +632,7 @@ void ele_write(element *element_, FILE *stream) {
 		str_append(tmp_str, L'\"');
 		wchar_t *tmp_ = str_out(tmp_str);
 		str_free(tmp_str);
-		if (element_->type == THEADER_) {
+		if (type(element_) == THEADER_) {
 			fprintf(stream, "\t%ls,", tmp_);
 		} else {
 			fprintf(stream, "%ls,", tmp_);
@@ -635,7 +642,7 @@ void ele_write(element *element_, FILE *stream) {
 }
 
 void ele_free(element *self) {
-	if (self->type == TSTRING_) {
+	if (type(self) == TSTRING_) {
 		str_free(self->value.string_);
 	}
 	free(self);
@@ -650,43 +657,65 @@ column *new_column(void) {
 
 	character *my_element = malloc(sizeof(node));
 
-	self->column_object.first_node = my_element;
-	self->column_object.last_node = my_element;
-	self->column_object.len = 0;
+	self->list_object.first_node = my_element;
+	self->list_object.last_node = my_element;
+	len(self) = 0;
 
-	self->column_object.last_visit_node_index = 0;
-	self->column_object.last_visit_node = my_element;
+	self->list_object.last_visit_node_index = 0;
+	self->list_object.last_visit_node = my_element;
 
-	my_element->next_node = self->column_object.first_node;
+	my_element->next_node = self->list_object.first_node;
+	return self;
+}
+
+// append items into column. for example:
+// col_appends(my_column, 3, TINT_, 213, TFLOAT_, 213.213, TSTRING_, L"hello");
+// will append 3 items with type int, float and string.
+column *col_appends(column *self, int arg_count, ...) {
+	va_list args;
+	int var_type;
+	va_start(args, arg_count);
+	for (uint32_t i = 0; i < arg_count; i++) {
+		var_type = va_arg(args, long);
+		if (var_type == TINT_) {
+			list_append(self, ele_new_int(va_arg(args, int64_t)));
+		} else if (var_type == TFLOAT_) {
+			list_append(self, ele_new_float(va_arg(args, double)));
+		} else if (var_type == TSTRING_) {
+			list_append(self, ele_new_str(va_arg(args, wchar_t*)));
+		} else if (var_type == 0) {
+			list_append(self, va_arg(args, element*));
+		}
+	}
 	return self;
 }
 
 column *column_copy(column *self) {
 	column *self_new = new_column();
-	for (uint32_t i = 0; i < self->column_object.len; i++) {
-		list_append(&self_new->column_object, ele_cpy($(self, i)));
+	for (uint32_t i = 0; i < len(self); i++) {
+		list_append(&self_new->list_object, ele_cpy($(self, i)));
 	}
 	return self_new;
 }
 
 void col_free(column *self) {
-	for (uint32_t i = 0; i < self->column_object.len; i++) {
-		ele_free($(&self->column_object, i));
+	for (uint32_t i = 0; i < len(self); i++) {
+		ele_free($(&self->list_object, i));
 	}
 	list_free((list *) self);
 }
 
 void col_printf(column *column) {
-	for (uint32_t i = 0; i < column->column_object.len - 1; i++) {
+	for (uint32_t i = 0; i < len(column) - 1; i++) {
 		ele_printf($(column, i));
 		printf("\t");
 	}
-	ele_printf($(column, column->column_object.len - 1));
+	ele_printf($(column, len(column) - 1));
 	printf("\n");
 }
 
 void col_write_out(column *self, FILE *stream) {
-	for (uint32_t i = 0; i < self->column_object.len; i++) {
+	for (uint32_t i = 0; i < len(self); i++) {
 		ele_write($(self, i), stream);
 	}
 	fprintf(stream, "\n");
@@ -704,7 +733,7 @@ void dict_store(dict *self, element *key, void *value);
 
 
 uint32_t p__dict_hash(const element *key, uint32_t seed) {
-	if (key->type == TSTRING_) {
+	if (type(key) == TSTRING_) {
 		wchar_t *string_ = str_out(key->value.string_);
 		uint64_t result = 0;
 		for (uint32_t i = 0;; i++) {
@@ -844,9 +873,9 @@ void dict_free(dict *self) {
 sheet *sheet_new(string *sheet_name, column *sheet_titles, uint32_t sheet_index_row) {
 	sheet *self = malloc(sizeof(sheet));
 
-	self->element_count = 0;
-	self->sheet_name = sheet_name;
-	self->sheet_titles = sheet_titles;
+	self->len = 0;
+	self->name = sheet_name;
+	self->titles = sheet_titles;
 	self->sheet_index_row = sheet_index_row;
 
 	self->sheet_element = new_list();
@@ -856,11 +885,11 @@ sheet *sheet_new(string *sheet_name, column *sheet_titles, uint32_t sheet_index_
 
 sheet *sheet_new_from_header(column *my_properties) {
 	string *sheet_name = str_cpy(val(my_properties, 0).string_);
-	uint32_t sheet_index_row = val(my_properties, my_properties->column_object.len - 1).int_;
+	uint32_t sheet_index_row = val(my_properties, len(my_properties) - 1).int_;
 	ele_free($(my_properties, 0));
-	ele_free($(my_properties, my_properties->column_object.len - 1));
-	list_pop_by_index(&my_properties->column_object, 0);
-	list_pop_by_index(&my_properties->column_object, my_properties->column_object.len - 1);
+	ele_free($(my_properties, len(my_properties) - 1));
+	list_pop_by_index(&my_properties->list_object, 0);
+	list_pop_by_index(&my_properties->list_object, len(my_properties) - 1);
 	sheet *ret = sheet_new(sheet_name, my_properties, sheet_index_row);
 	return ret;
 }
@@ -872,7 +901,7 @@ void sheet_append(sheet *self, column *column) {
 	if (self->sheet_index_row != -1) {
 		dict_store(self->sheet_index_dict, $(column, self->sheet_index_row), column);
 	}
-	self->element_count += 1;
+	self->len += 1;
 }
 
 column *sheet_get_col_by_name(sheet *self, element *index) {
@@ -890,9 +919,12 @@ element *sheet_get_ele_by_index(sheet *self, uint32_t column, uint32_t row) {
 void sheet_pop(sheet *self, column *my_column) {
 	element *hash_element = $(my_column, self->sheet_index_row);
 	dict_pop(self->sheet_index_dict, hash_element);
+	// because pop the list need to swap this node and the next node, assign the next column's father node as this node.
+	((column *)my_column->father_node->next_node->value)->father_node = my_column->father_node;
+
 	list_pop_by_node(self->sheet_element, my_column->father_node); // pop the column which stores in self->sheet_element
 	col_free(my_column);
-	self->element_count -= 1;
+	self->len -= 1;
 }
 
 void sheet_pop_by_index(sheet *self, uint32_t index) {
@@ -906,7 +938,7 @@ void sheet_pop_by_name(sheet *self, element *index) {
 }
 
 void sheet_printf(sheet *self_sheet, char *index_prefix, char *index_name) {
-	if (self_sheet->element_count == 0) {
+	if (self_sheet->len == 0) {
 		printf("Empty category list\n");
 		return;
 	}
@@ -914,8 +946,8 @@ void sheet_printf(sheet *self_sheet, char *index_prefix, char *index_name) {
 	if (is_print_index) {
 		printf("%s\t", index_name);
 	}
-	col_printf(self_sheet->sheet_titles);
-	for (uint32_t column_number = 0; column_number < self_sheet->element_count; column_number++) {
+	col_printf(self_sheet->titles);
+	for (uint32_t column_number = 0; column_number < self_sheet->len; column_number++) {
 		if (is_print_index) {
 			printf(index_prefix, column_number + 1);
 			printf("\t");
@@ -925,21 +957,21 @@ void sheet_printf(sheet *self_sheet, char *index_prefix, char *index_name) {
 }
 
 void sheet_write_out(sheet *self, FILE *stream) {
-	element *sheet_name = ele_new_str_from_str(str_cpy(self->sheet_name));
-	// the self->sheet_name is a single string, and for printing the sheet_name, we need to create an element string
-	// contains the sheet_name, and use it to print, then free it.
-	sheet_name->type = THEADER_;
+	element *sheet_name = ele_new_str_from_str(str_cpy(self->name));
+	// the self->name is a single string, and for printing the name, we need to create an element string
+	// contains the name, and use it to print, then free it.
+	type(sheet_name) = THEADER_;
 	ele_write(sheet_name, stream);
-	sheet_name->type = TSTRING_;
+	type(sheet_name) = TSTRING_;
 
-	// write sheet_titles by adding index row at the end of the column.
+	// write titles by adding index row at the end of the column.
 	element *tmp_ = ele_new_int(self->sheet_index_row);
-	list_append(&self->sheet_titles->column_object, tmp_);
-	col_write_out(self->sheet_titles, stream);
+	list_append(&self->titles->list_object, tmp_);
+	col_write_out(self->titles, stream);
 	ele_free(tmp_);
-	list_pop_by_index(&self->sheet_titles->column_object, self->sheet_titles->column_object.len - 1);
+	list_pop_by_index(&self->titles->list_object, len(self->titles) - 1);
 
-	for (uint32_t i = 0; i < self->element_count; i++) {
+	for (uint32_t i = 0; i < self->len; i++) {
 		ele_write(sheet_name, stream); // write the column title;
 		col_write_out($(self->sheet_element, i), stream);
 	}
@@ -947,9 +979,9 @@ void sheet_write_out(sheet *self, FILE *stream) {
 }
 
 void sheet_free(sheet *self) {
-	str_free(self->sheet_name);
-	col_free(self->sheet_titles);
-	for (uint32_t i = 0; i < self->element_count; i++) {
+	str_free(self->name);
+	col_free(self->titles);
+	for (uint32_t i = 0; i < self->len; i++) {
 		col_free(sheet_get_col_by_index(self, i));
 	}
 	list_free(self->sheet_element);
@@ -967,7 +999,7 @@ table *new_table(void) {
 }
 
 void table_append_sheet(table *self, sheet *_element) {
-	dict_store(self->table_dict, ele_new_str_from_str(_element->sheet_name), _element);
+	dict_store(self->table_dict, ele_new_str_from_str(_element->name), _element);
 	list_append(self->table_list, _element);
 }
 
@@ -1027,7 +1059,7 @@ list *p__csv_parse_split_line(char *line, char **buf_con) {
 			str_append(buf, line[i]);
 		}
 	}
-	if (buf->str_object.len > 0) {
+	if (len(buf) > 0) {
 		list_append(result_list, buf);
 	} else {
 		str_free(buf);
@@ -1059,9 +1091,9 @@ element *p__csv_parse_element(string *element) {
 	}
 
 	bool is_header = element_str[0] == '\t';
-	if (element_str[0 + is_header] == '"' && element_str[element->str_object.len - 1] == '"') {
-		list_pop_by_index(&element->str_object, 0 + is_header);
-		list_pop_by_index(&element->str_object, element->str_object.len - 1);
+	if (element_str[0 + is_header] == '"' && element_str[len(element) - 1] == '"') {
+		list_pop_by_index(&element->list_object, 0 + is_header);
+		list_pop_by_index(&element->list_object, len(element) - 1);
 	}
 
 	str_replace(element, L"\"\"", L"\"", UINT32_MAX);
@@ -1105,7 +1137,7 @@ void p__create_menu_file(const char *file_name) {
 	FILE *file_handle = fopen(file_name, "w");
 	column *sheet_titles = new_column();
 
-	list_append(&sheet_titles->column_object, ele_new_str(L"Name"));
+	list_append(&sheet_titles->list_object, ele_new_str(L"Name"));
 	sheet *menu = sheet_new(
 			  new_str(L"MENU"),
 			  sheet_titles,
@@ -1120,13 +1152,14 @@ void p__create_order_file(const char *file_name) {
 	FILE *file_handle = fopen(file_name, "w");
 
 	column *transaction_history_sheet_titles = new_column();
-	list_append(transaction_history_sheet_titles, ele_new_str(L"Table no."));
-	list_append(transaction_history_sheet_titles, ele_new_str(L"Payment method"));
-	list_append(transaction_history_sheet_titles, ele_new_str(L"Card no."));
-	list_append(transaction_history_sheet_titles, ele_new_str(L"Card holder's name"));
-	list_append(transaction_history_sheet_titles, ele_new_str(L"Amt."));
-	list_append(transaction_history_sheet_titles, ele_new_str(L"Date"));
-	list_append(transaction_history_sheet_titles, ele_new_str(L"Time"));
+	col_appends(transaction_history_sheet_titles, 7,
+	            TSTRING_, L"Table no.",
+	            TSTRING_, L"Payment method",
+	            TSTRING_, L"Card no.",
+	            TSTRING_, L"Card holder's name",
+	            TSTRING_, L"Amt.",
+	            TSTRING_, L"Date",
+	            TSTRING_, L"Time");
 	sheet *transaction_history = sheet_new(
 			  new_str(L"TRANSACTION_HISTORY"),
 			  transaction_history_sheet_titles,
@@ -1148,7 +1181,7 @@ void p__create_order_file(const char *file_name) {
 	fclose(file_handle);
 }
 
-void p__csv_open(const char *file_name, table *table) {
+void csv_open_file(const char *file_name, table *table) {
 	struct stat stat_;
 	if (!p__check_file(file_name)) {
 		p__create_menu_file(file_name);
@@ -1177,15 +1210,15 @@ void p__csv_open(const char *file_name, table *table) {
 
 	while (true) {
 		my_column = p__csv_parse_line(buf_con, &buf_con);
-		if (my_column->column_object.len == 0) {
+		if (len(my_column) == 0) {
 			col_free(my_column);
 			continue;
 		}
 		element *first_element = $(my_column, 0);
-		if (first_element->type == THEADER_) {
+		if (type(first_element) == THEADER_) {
 			table_append_sheet(table, sheet_new_from_header(my_column));
 		} else {
-			list_pop_by_index(&my_column->column_object, 0);
+			list_pop_by_index(&my_column->list_object, 0);
 			sheet_append_by_key(table, first_element, my_column);
 			ele_free(first_element);
 		}
@@ -1204,13 +1237,12 @@ void csv_open(table *self) {
 	if (!p__check_file(TRANSITION_HISTORY_FILE_NAME)) {
 		p__create_order_file(TRANSITION_HISTORY_FILE_NAME);
 	}
-	p__csv_open(MENU_FILE_NAME, self);
-	p__csv_open(TRANSITION_HISTORY_FILE_NAME, self);
+	csv_open_file(MENU_FILE_NAME, self);
+	csv_open_file(TRANSITION_HISTORY_FILE_NAME, self);
 }
 
 bool flush_file(table *self, char *succeed_prompt, const char *failed_prompt) {
-//	FILE *menu_file = fopen(MENU_FILE_NAME, "w");
-	FILE *menu_file = NULL;
+	FILE *menu_file = fopen(MENU_FILE_NAME, "w");
 	if (menu_file == NULL) {
 		if (!*failed_prompt) {
 			ERROR(4, "failed when tries to write file '", MENU_FILE_NAME, "' reason: ", strerror(errno));
@@ -1222,7 +1254,7 @@ bool flush_file(table *self, char *succeed_prompt, const char *failed_prompt) {
 	sheet *category_sheet = table_get_sheet_by_name(self, L"MENU");
 	sheet_write_out(category_sheet, menu_file);
 	// write sub-sheets under sheet "MENU"
-	for (uint32_t i = 0; i < category_sheet->element_count; i++) {
+	for (uint32_t i = 0; i < category_sheet->len; i++) {
 		wchar_t *sheet_name = str_out(sheet_get_ele_by_index(category_sheet, i, 0)->value.string_);
 		sheet_write_out(table_get_sheet_by_name(self, sheet_name), menu_file);
 		free(sheet_name);
@@ -1350,11 +1382,11 @@ string *p__input_password() {
 	tcsetattr(0, TCSANOW, &new_cfg);
 
 	while ((c = getchar()) != '\n') {
-		if (c == 127 && password->str_object.len != 0) {
+		if (c == 127 && len(password) != 0) {
 			putchar(0x8);
 			putchar(' ');
 			putchar(0x8);
-			list_pop_by_index(&password->str_object, password->str_object.len - 1);
+			list_pop_by_index(&password->list_object, len(password) - 1);
 		} else if (c != 127) {
 			putchar('*');
 			str_append(password, c);
@@ -1386,7 +1418,7 @@ bool p__is_valid_date(uint32_t year, uint8_t month, uint8_t day) {
 }
 
 bool p__parse_date(string *raw_date, uint8_t *year, uint8_t *month, uint8_t *day) {
-	if (raw_date->str_object.len != 8) {
+	if (len(raw_date) != 8) {
 		return false;
 	}
 	wchar_t *raw_input_str = str_out(raw_date);
@@ -1428,7 +1460,6 @@ void p__input_date(uint8_t *year, uint8_t *month, uint8_t *day, char *msg) {
 		}
 		str_free(raw_input);
 		return;
-
 	}
 }
 
@@ -1473,7 +1504,7 @@ void change_password(table *self) {
 	ENTER_NEW_PW:
 	printf("Enter new password: ");
 	string *new_password = p__input_password();
-	if (new_password->str_object.len < 5 || new_password->str_object.len > 15) {
+	if (len(new_password) < 5 || len(new_password) > 15) {
 		printf("Password can’t be less than 5 characters and more than 15 characters.\n");
 		str_free(new_password);
 		goto ENTER_NEW_PW;
@@ -1496,14 +1527,15 @@ void change_password(table *self) {
 void add_category(table *self) {
 	sheet *menu_sheet = table_get_sheet_by_name(self, L"MENU");
 
-	ADD_CATEGORY:{};
+	ADD_CATEGORY:
+	{};
 	element *category_name = ele_new_str_from_str(str_input("Enter a category name: "));
-	if (category_name->value.string_->str_object.len == 0) {
+	if (len(category_name->value.string_) == 0) {
 		printf("Invalid input.\n");
 		ele_free(category_name);
 		goto ADD_CATEGORY;
 	}
-	if (category_name->value.string_->str_object.len > 50) {
+	if (len(category_name->value.string_) > 50) {
 		printf("Category name can’t be more than 50 characters.\n");
 		ele_free(category_name);
 		goto ADD_CATEGORY;
@@ -1514,22 +1546,22 @@ void add_category(table *self) {
 		goto ADD_CATEGORY;
 	} else {
 		column *new_col = new_column();
-		list_append(&new_col->column_object, category_name);
+		list_append(new_col, category_name);
 		sheet_append(menu_sheet, new_col);
 
 		column *food_sheet_column = new_column();
-		list_append(food_sheet_column, ele_new_str(L"Name"));
-		list_append(food_sheet_column, ele_new_str(L"Price"));
-		list_append(food_sheet_column, ele_new_str(L"Availability"));
-		list_append(food_sheet_column, ele_new_str(L"Description"));
+		col_appends(food_sheet_column, 4,
+		            TSTRING_, L"Name",
+		            TSTRING_, L"Price",
+		            TSTRING_, L"Availability",
+		            TSTRING_, L"Description");
 		sheet *food_sheet = sheet_new(
 				  str_cpy(category_name->value.string_),
 				  food_sheet_column,
 				  0
 		);
 		table_append_sheet(self, food_sheet);
-
-		printf("Successfully created category.\n");
+		flush_file(self, "Successfully created category.\n", "Category creation unsuccessful.\n");
 	}
 	if (input_yn_question("Do you want to add more categories")) {
 		goto ADD_CATEGORY;
@@ -1538,15 +1570,16 @@ void add_category(table *self) {
 
 void delete_category(table *self) {
 	sheet *menu_sheet = table_get_sheet_by_name(self, L"MENU");
-	if (menu_sheet->element_count == 0) {
+	if (menu_sheet->len == 0) {
 		printf("Empty category list.\n");
 		return;
 	}
 	while (true) {
 		int64_t index = input_integer_question("Enter a category number: ", "Invalid category number.", 1,
-		                                       menu_sheet->element_count);
+		                                       menu_sheet->len);
 		sheet_pop_by_index(menu_sheet, index - 1);
-		printf("Successfully deleted.\n");
+
+		flush_file(self, "Successfully deleted.\n", "Unsuccessful deletion.\n");
 		if (!input_yn_question("Do you want to delete more categories")) {
 			break;
 		}
@@ -1560,15 +1593,14 @@ void view_category(table *self) {
 
 void add_food_item(table *self) {
 	sheet *menu_sheet = table_get_sheet_by_name(self, L"MENU");
-	if (menu_sheet->element_count == 0) {
+	if (menu_sheet->len == 0) {
 		printf("Empty category list.\n");
 		return;
 	}
 	while (true) {
 		int64_t category_number = input_integer_question("Enter a category number:", "Invalid category number.", 1,
-		                                                 menu_sheet->element_count);
-		sheet *food_sheet = table_get_sheet_by_key(self,
-		                                           sheet_get_ele_by_index(menu_sheet, category_number - 1, 0));
+		                                                 menu_sheet->len);
+		sheet *food_sheet = table_get_sheet_by_key(self, sheet_get_ele_by_index(menu_sheet, category_number - 1, 0));
 
 		element *food_name = ele_new_str_from_str(str_input("Enter food name: "));
 
@@ -1581,13 +1613,13 @@ void add_food_item(table *self) {
 			string *description = str_input("Enter a description: ");
 
 			column *food_column = new_column();
-			list_append(&food_column->column_object, food_name);
-			list_append(&food_column->column_object, price);
-			list_append(&food_column->column_object, ele_new_int(availability));
-			list_append(&food_column->column_object, ele_new_str_from_str(description));
+			list_append(food_column, food_name);
+			list_append(food_column, price);
+			list_append(food_column, ele_new_int(availability));
+			list_append(food_column, ele_new_str_from_str(description));
 
 			sheet_append(food_sheet, food_column);
-			printf("Successfully created food record.\n");
+			flush_file(self, "Successfully created food record.\n", "Food record creation unsuccessful.\n");
 		}
 		if (!input_yn_question("Do you want to add more food records")) {
 			break;
@@ -1598,24 +1630,21 @@ void add_food_item(table *self) {
 void delete_food_item(table *self) {
 	while (true) {
 		sheet *menu_sheet = table_get_sheet_by_name(self, L"MENU");
-		if (menu_sheet->element_count == 0) {
+		if (menu_sheet->len == 0) {
 			printf("Empty category list.\n");
 			return;
 		}
-		int64_t category_number = input_integer_question("Enter a category number:", "Invalid input.", 1,
-		                                                 menu_sheet->element_count);
-		sheet *food_sheet = table_get_sheet_by_key(self,
-		                                           sheet_get_ele_by_index(menu_sheet, category_number - 1, 0));
+		int64_t category_number = input_integer_question("Enter a category number:", "Invalid input.", 1, menu_sheet->len);
+		sheet *food_sheet = table_get_sheet_by_key(self, sheet_get_ele_by_index(menu_sheet, category_number - 1, 0));
 
-
-		if (food_sheet->element_count == 0) {
+		if (food_sheet->len == 0) {
 			printf("Empty food list.\n");
 			return;
 		}
-		int64_t food = input_integer_question("Enter a food number:", "Invalid input.", 1, food_sheet->element_count);
+		int64_t food = input_integer_question("Enter a food number:", "Invalid input.", 1, food_sheet->len);
 
 		sheet_pop_by_index(food_sheet, food - 1);
-		printf("Successfully deleted.\n");
+		flush_file(self, "Successfully deleted.\n", "Unsuccessful deletion.\n");
 		if (!input_yn_question("Do you want to delete more food items")) {
 			break;
 		}
@@ -1624,12 +1653,11 @@ void delete_food_item(table *self) {
 
 void view_food_items(table *self) {
 	sheet *menu_sheet = table_get_sheet_by_name(self, L"MENU");
-	if (menu_sheet->element_count == 0) {
+	if (menu_sheet->len == 0) {
 		printf("Empty category list.\n");
 		return;
 	}
-	int64_t category_number = input_integer_question("Enter a category number:", "Invalid input.", 1,
-	                                                 menu_sheet->element_count);
+	int64_t category_number = input_integer_question("Enter a category number:", "Invalid input.", 1, menu_sheet->len);
 	element *category_name = sheet_get_ele_by_index(menu_sheet, category_number - 1, 0);
 
 	wchar_t *temp = str_out(category_name->value.string_);
@@ -1651,8 +1679,8 @@ void show_transit_history(table *self) {
 	uint8_t year, month, day;
 	element *total = ele_new_float(0.0);
 	sheet *transit_sheet = table_get_sheet_by_name(self, L"TRANSACTION_HISTORY");
-	col_printf(transit_sheet->sheet_titles);
-	for (uint32_t column_number = 0; column_number < transit_sheet->element_count; column_number++) {
+	col_printf(transit_sheet->titles);
+	for (uint32_t column_number = 0; column_number < transit_sheet->len; column_number++) {
 		p__parse_date(val(sheet_get_col_by_index(transit_sheet, column_number), 5).string_,
 		              &year, &month, &day);
 		if (p__compare_date(year, month, day, year_from, month_from, day_from) != -1) {
@@ -1709,7 +1737,9 @@ void admin_section(table *self) {
 				change_password(self);
 				break;
 			default:
-				flush_file(self, "", ""); // not safe tolerant, if failed, prompt error message.
+				flush_file(self, "", "");
+				// not save tolerant, if failed to flush the file, prompt error message and then press enter to crash the program.
+				// if you decided to achieve save tolerant, commit this line of code.
 				return;
 		}
 	}
@@ -1719,11 +1749,12 @@ void admin_section(table *self) {
 // order functions:
 sheet *p__ordered_item_sheet_create(void) {
 	column *ordered_items_title = new_column();
-	list_append(ordered_items_title, ele_new_str(L"Food no."));
-	list_append(ordered_items_title, ele_new_str(L"Name"));
-	list_append(ordered_items_title, ele_new_str(L"Price"));
-	list_append(ordered_items_title, ele_new_str(L"Qty"));
-	list_append(ordered_items_title, ele_new_str(L"Description"));
+	col_appends(ordered_items_title, 5,
+	            TSTRING_, L"Food no.",
+	            TSTRING_, L"Name",
+	            TSTRING_, L"Price",
+	            TSTRING_, L"Qty",
+	            TSTRING_, L"Description");
 
 	return sheet_new(new_str(L"ORDERED_ITEMS"), ordered_items_title, 0);
 }
@@ -1732,14 +1763,14 @@ void p__ordered_item_sheet_append(sheet *self, column *food_column, int category
 	wchar_t food_no[20] = L"";
 	swprintf(food_no, 20, L"%i-%i", category_number, food_number);
 	column *ordered_items_column = column_copy(food_column);
-	list_insert_by_index(&ordered_items_column->column_object, ele_new_str(food_no), 0);
+	list_insert_by_index(&ordered_items_column->list_object, ele_new_str(food_no), 0);
 	val(ordered_items_column, 3).int_ = qty;
 	sheet_append(self, ordered_items_column);
 	// deduce the qty
 	val(food_column, 2).int_ -= qty;
 }
 
-void p__ordered_item_sheet_del(table *self, sheet *order_sheet, element * food_no) {
+void p__ordered_item_sheet_del(table *self, sheet *order_sheet, element *food_no) {
 	GOTO1:
 	{}
 	if (food_no == NULL) {
@@ -1750,7 +1781,7 @@ void p__ordered_item_sheet_del(table *self, sheet *order_sheet, element * food_n
 			goto GOTO1;
 		}
 	}
-	column * food_column = sheet_get_col_by_name(order_sheet, food_no);
+	column *food_column = sheet_get_col_by_name(order_sheet, food_no);
 	int qty = val(food_column, 3).int_;
 	int category_number, food_number;
 	wchar_t *tmp_ = str_out(food_no->value.string_);
@@ -1770,7 +1801,7 @@ element *p__ordered_item_print(sheet *self) {
 
 	element *sum = ele_new_float(0.0);
 	element *tmp1 = ele_new_int(0);
-	for (uint32_t i = 0; i < self->element_count; i++) {
+	for (uint32_t i = 0; i < self->len; i++) {
 		ele_mul($(sheet_get_col_by_index(self, i), 3), $(sheet_get_col_by_index(self, i), 2), tmp1);
 		ele_add(tmp1, sum, sum);
 	}
@@ -1807,12 +1838,12 @@ void p__payment(table *my_table, int table_number, element *amount) {
 
 		JMP1:
 		card_holder_name = str_input("Enter the card holder’s name: ");
-		if (card_holder_name->str_object.len == 0) {
+		if (len(card_holder_name) == 0) {
 			printf("Invalid input.\n");
 			str_free(card_holder_name);
 			goto JMP1;
 		}
-		if (card_holder_name->str_object.len > 50) {
+		if (len(card_holder_name) > 50) {
 			printf("Input name is more than 50 characters.\n");
 			str_free(card_holder_name);
 			goto JMP1;
@@ -1832,14 +1863,15 @@ void p__payment(table *my_table, int table_number, element *amount) {
 	swprintf(local_time, 9, L"%d/%d/%d", time_->tm_hour, time_->tm_mon + 1, time_->tm_mday);
 
 	column *pay_record_column = new_column();
-	list_append(pay_record_column, ele_new_int(table_number));
-	list_append(pay_record_column, ele_new_str(payment_method));
-	list_append(pay_record_column, ele_new_str_from_str(card_number));
-	list_append(pay_record_column, ele_new_str_from_str(card_holder_name));
-	list_append(pay_record_column, amount);
-	list_append(pay_record_column, ele_new_str(local_date));
-	list_append(pay_record_column, ele_new_str(local_time));
 
+	col_appends(pay_record_column, 7,
+	            TINT_, table_number,
+	            TSTRING_, payment_method,
+	            NULL, ele_new_str_from_str(card_number),
+	            NULL, ele_new_str_from_str(card_holder_name),
+	            NULL, amount,
+	            TSTRING_, local_date,
+	            TSTRING_, local_time);
 	sheet *payment_record_sheet = table_get_sheet_by_name(my_table, L"TRANSACTION_HISTORY");
 	sheet_append(payment_record_sheet, pay_record_column);
 }
@@ -1848,7 +1880,7 @@ void order_food(table *my_table) {
 	element *amount;
 	sheet *ordered_sheet = p__ordered_item_sheet_create();
 	sheet *category_sheet = table_get_sheet_by_name(my_table, L"MENU");
-	if (category_sheet->element_count == 0) {
+	if (category_sheet->len == 0) {
 		printf("Empty category list\n");
 		return;
 	}
@@ -1857,11 +1889,10 @@ void order_food(table *my_table) {
 
 	CATEGORY:
 	{};
-	int category_number = (int) input_integer_question("Enter the category number: ", "Invalid category number.", 1,
-	                                                   category_sheet->element_count);
+	int category_number = (int) input_integer_question("Enter the category number: ", "Invalid category number.", 1, category_sheet->len);
 	element *category_name = sheet_get_ele_by_index(category_sheet, category_number - 1, 0);
 	sheet *food_sheet = table_get_sheet_by_key(my_table, category_name);
-	if (food_sheet->element_count == 0) {
+	if (food_sheet->len == 0) {
 		printf("Empty food list.\n");
 		goto CATEGORY;
 	}
@@ -1869,8 +1900,7 @@ void order_food(table *my_table) {
 
 	FOOD_MENU:
 	{}; // order food
-	int food_number = (int) input_integer_question("Enter the food number: ", "Invalid food number.", 1,
-	                                               food_sheet->element_count);
+	int food_number = (int) input_integer_question("Enter the food number: ", "Invalid food number.", 1, food_sheet->len);
 	int food_availability = (int) sheet_get_ele_by_index(food_sheet, food_number - 1, 2)->value.int_;
 	if (food_availability == 0) {
 		printf("Invalid food number.\n");
@@ -1879,12 +1909,10 @@ void order_food(table *my_table) {
 	if (p__check_is_ordered(ordered_sheet, category_number, food_number)) {
 		printf("You have already selected the food\n");
 	} else {
-		int food_quantity = (int) input_integer_question("Enter the food item’s quantity: ", "Invalid quantity.", 1,
-		                                                 food_availability);
+		int food_quantity = (int) input_integer_question("Enter the food item’s quantity: ", "Invalid quantity.", 1, food_availability);
 		food_availability -= food_quantity;
 		// append the ordered items
-		p__ordered_item_sheet_append(ordered_sheet, sheet_get_col_by_index(food_sheet, food_number - 1),
-		                             category_number, food_number, food_quantity);
+		p__ordered_item_sheet_append(ordered_sheet, sheet_get_col_by_index(food_sheet, food_number - 1), category_number, food_number, food_quantity);
 	}
 	if (food_availability && input_yn_question("Do you want to order more food")) {
 		goto FOOD_MENU;
@@ -1908,17 +1936,17 @@ void order_food(table *my_table) {
 		}
 	}
 
-	PAYMENT:{};
+	PAYMENT:
+	{};
 	p__payment(my_table, table_number, amount);
 	bool is_succeed = flush_file(my_table, "Payment successful.\n", "Payment unsuccessful.\n");
 	if (is_succeed == false) {
-		if(input_integer_question("1. Cancel order 2. Change payment method (1/2)?:", "Invalid input.", 1, 2) == 2){
+		if (input_integer_question("1. Cancel order 2. Change payment method (1/2)?:", "Invalid input.", 1, 2) == 2) {
 			goto PAYMENT;
-		}
-		else{
-			for (uint32_t i = 0; i < ordered_sheet->element_count; i++){
-				p__ordered_item_sheet_del(my_table, ordered_sheet,ele_new_str_from_str(str_cpy(
-															 sheet_get_ele_by_index(ordered_sheet, i, 0)->value.string_)));
+		} else {
+			for (uint32_t i = 0; i < ordered_sheet->len; i++) {
+				p__ordered_item_sheet_del(my_table, ordered_sheet, ele_new_str_from_str(str_cpy(
+						  sheet_get_ele_by_index(ordered_sheet, i, 0)->value.string_)));
 			}
 		}
 	}
@@ -1928,6 +1956,7 @@ void order_food(table *my_table) {
 
 ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 void main_menu(table *my_table) {
+	setjmp(JMP);
 	while (1) {
 		printf("1)  Order food\n2)  Admin section\n3)  Exit\n");
 		int64_t option = input_integer_question("Option: ", "Unknown option.", 0, 3);
@@ -1944,7 +1973,13 @@ void main_menu(table *my_table) {
 	}
 }
 
+void sig_handler(int sig){
+	errno = SIGINT;
+	ERROR(1, "Received SIGINT signal, quiting the program...");
+}
+
 int main(void) {
+	signal(SIGINT, sig_handler);
 	setbuf(stdout, 0); // workaround for Clion debugger when running in WSL.
 	table *my_table = new_table();
 	csv_open(my_table);
