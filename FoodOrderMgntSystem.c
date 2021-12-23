@@ -1810,7 +1810,6 @@ element *p__ordered_item_print(sheet *self) {
 	printf("Total: ");
 	ele_printf(sum);
 	printf("\n");
-	ele_free(sum);
 	return sum;
 }
 
@@ -1930,10 +1929,12 @@ void order_food(table *my_table) {
 	if (!input_yn_question("Do you want to check out")) {
 		if (input_yn_question("Do you want to add to the selected food list")) {
 			sheet_printf(category_sheet, "%i", "Category no.");
+			ele_free(amount);
 			goto CATEGORY;
 		}
 		if (input_yn_question("Do you want to remove from the selected food list")) {
 			p__ordered_item_sheet_del(my_table, ordered_sheet, NULL);
+			ele_free(amount);
 			goto CHECK_OUT;
 		}
 	}
