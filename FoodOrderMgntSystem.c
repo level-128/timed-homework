@@ -447,7 +447,8 @@ void str_printf(string *self) {
 }
 
 // return a user input string.
-string *str_input(void) {
+string *str_input(char * prompt) {
+	printf("%s", prompt);
 	string *input_list = new_str(NULL);
 	int c;
 	while ((c = getchar()) != '\n') {
@@ -1207,10 +1208,16 @@ void csv_open(table *self) {
 	p__csv_open(TRANSITION_HISTORY_FILE_NAME, self);
 }
 
-void flush_file(table *self) {
-	FILE *menu_file = fopen(MENU_FILE_NAME, "w");
+bool flush_file(table *self, char *succeed_prompt, const char *failed_prompt) {
+//	FILE *menu_file = fopen(MENU_FILE_NAME, "w");
+	FILE *menu_file = NULL;
 	if (menu_file == NULL) {
-		ERROR(4, "failed when tries to write file '", MENU_FILE_NAME, "' reason: ", strerror(errno));
+		if (!*failed_prompt) {
+			ERROR(4, "failed when tries to write file '", MENU_FILE_NAME, "' reason: ", strerror(errno));
+		} else {
+			printf("%s", failed_prompt);
+			return false;
+		}
 	}
 	sheet *category_sheet = table_get_sheet_by_name(self, L"MENU");
 	sheet_write_out(category_sheet, menu_file);
@@ -1224,13 +1231,20 @@ void flush_file(table *self) {
 
 	FILE *trans_hist_file = fopen(TRANSITION_HISTORY_FILE_NAME, "w");
 	if (menu_file == NULL) {
-		ERROR(4, "failed when tries to write file '", TRANSITION_HISTORY_FILE_NAME, "' reason: ", strerror(errno));
+		if (*failed_prompt) {
+			ERROR(4, "failed when tries to write file '", TRANSITION_HISTORY_FILE_NAME, "' reason: ", strerror(errno));
+		} else {
+			printf("%s", failed_prompt);
+			return false;
+		}
 	}
 	sheet *trans_hist_sheet = table_get_sheet_by_name(self, L"TRANSACTION_HISTORY");
 	sheet *password_sheet = table_get_sheet_by_name(self, L"PASSWORD");
 	sheet_write_out(trans_hist_sheet, trans_hist_file);
 	sheet_write_out(password_sheet, trans_hist_file);
 	fclose(trans_hist_file);
+	printf("%s", succeed_prompt);
+	return true;
 }
 
 
@@ -1241,7 +1255,7 @@ bool input_yn_question(char *message) {
 	string *input;
 	while (true) {
 		printf("%s (y/n)?: ", message);
-		input = str_input();
+		input = str_input("");
 		if (str_cmpw(input, L"y") || str_cmpw(input, L"Y")) {
 			str_free(input);
 			return true;
@@ -1267,7 +1281,7 @@ input_option_question(char *message, char *error_message, int option_number, wch
 			}
 			printf(")?: ");
 		}
-		input = str_input();
+		input = str_input("");
 		for (int i = 0; i < option_number; i++) {
 			if (!str_cmpw(input, options[i])) {
 				str_free(input);
@@ -1287,8 +1301,7 @@ int64_t input_integer_question(char *message, char *error_message, int64_t min_v
 
 
 	while (true) {
-		printf("%s", message);
-		input = str_input();
+		input = str_input(message);
 		begin_ptr = str_out(input);
 		result = wcstoll(begin_ptr, &end_ptr, 10);
 		if (*end_ptr != '\0' || result > max_value || result < min_value || *begin_ptr == '\0') {
@@ -1305,8 +1318,7 @@ int64_t input_integer_question(char *message, char *error_message, int64_t min_v
 
 element *input_number_question(char *message, char *error_message) {
 	while (true) {
-		printf("%s\n", message);
-		string *input = str_input();
+		string *input = str_input(message);
 		wchar_t *input_str = str_out(input);
 		str_free(input);
 
@@ -1407,8 +1419,7 @@ bool p__parse_date(string *raw_date, uint8_t *year, uint8_t *month, uint8_t *day
 
 void p__input_date(uint8_t *year, uint8_t *month, uint8_t *day, char *msg) {
 	while (true) {
-		printf("%s", msg);
-		string *raw_input = str_input();
+		string *raw_input = str_input(msg);
 
 		if (!p__parse_date(raw_input, year, month, day) || !p__is_valid_date(*year, *month, *day)) {
 			printf("Invalid date.\n");
@@ -1485,9 +1496,8 @@ void change_password(table *self) {
 void add_category(table *self) {
 	sheet *menu_sheet = table_get_sheet_by_name(self, L"MENU");
 
-	ADD_CATEGORY:
-	printf("Enter a category name: ");
-	element *category_name = ele_new_str_from_str(str_input());
+	ADD_CATEGORY:{};
+	element *category_name = ele_new_str_from_str(str_input("Enter a category name: "));
 	if (category_name->value.string_->str_object.len == 0) {
 		printf("Invalid input.\n");
 		ele_free(category_name);
@@ -1533,7 +1543,7 @@ void delete_category(table *self) {
 		return;
 	}
 	while (true) {
-		int64_t index = input_integer_question("Enter a category number:", "Invalid category number.", 1,
+		int64_t index = input_integer_question("Enter a category number: ", "Invalid category number.", 1,
 		                                       menu_sheet->element_count);
 		sheet_pop_by_index(menu_sheet, index - 1);
 		printf("Successfully deleted.\n");
@@ -1560,8 +1570,7 @@ void add_food_item(table *self) {
 		sheet *food_sheet = table_get_sheet_by_key(self,
 		                                           sheet_get_ele_by_index(menu_sheet, category_number - 1, 0));
 
-		printf("Enter food name: ");
-		element *food_name = ele_new_str_from_str(str_input());
+		element *food_name = ele_new_str_from_str(str_input("Enter food name: "));
 
 		if (sheet_get_col_by_name(food_sheet, food_name)) {
 			printf("The food item already exists in the food list in the same category.\n");
@@ -1569,8 +1578,7 @@ void add_food_item(table *self) {
 		} else {
 			element *price = input_number_question("Enter price: ", "Invalid input");
 			int64_t availability = input_integer_question("Enter availability: ", "Invalid input.", 0, 999999999);
-			printf("Enter a description: ");
-			string *description = str_input();
+			string *description = str_input("Enter a description: ");
 
 			column *food_column = new_column();
 			list_append(&food_column->column_object, food_name);
@@ -1675,7 +1683,7 @@ void admin_section(table *self) {
 		       "7. Show transaction history\n"
 		       "8. Change password\n"
 		       "9. Exit\n");
-		switch (input_integer_question("Option:", "Unknown option.", 1, 9)) {
+		switch (input_integer_question("Option: ", "Unknown option.", 1, 9)) {
 			case 1:
 				add_category(self);
 				break;
@@ -1701,7 +1709,7 @@ void admin_section(table *self) {
 				change_password(self);
 				break;
 			default:
-				flush_file(self);
+				flush_file(self, "", ""); // not safe tolerant, if failed, prompt error message.
 				return;
 		}
 	}
@@ -1731,31 +1739,30 @@ void p__ordered_item_sheet_append(sheet *self, column *food_column, int category
 	val(food_column, 2).int_ -= qty;
 }
 
-void p__ordered_item_sheet_del(table *self, sheet *order_sheet) {
+void p__ordered_item_sheet_del(table *self, sheet *order_sheet, element * food_no) {
 	GOTO1:
 	{}
-	printf("Enter the food number you want to remove from the selected list:");
-	element *food_no = ele_new_str_from_str(str_input());
-	column *food_column = sheet_get_col_by_name(order_sheet, food_no);
-	if (food_column == NULL) {
-		printf("Invalid food number.\n");
-		ele_free(food_no);
-		goto GOTO1;
+	if (food_no == NULL) {
+		food_no = ele_new_str_from_str(str_input("Enter the food number you want to remove from the selected list:"));
+		if (sheet_get_col_by_name(order_sheet, food_no) == NULL) {
+			printf("Invalid food number.\n");
+			ele_free(food_no);
+			goto GOTO1;
+		}
 	}
-
+	column * food_column = sheet_get_col_by_name(order_sheet, food_no);
 	int qty = val(food_column, 3).int_;
 	int category_number, food_number;
 	wchar_t *tmp_ = str_out(food_no->value.string_);
 	swscanf(tmp_, L"%i-%i", &category_number, &food_number);
 	free(tmp_);
-	ele_free(food_no);
 
 	sheet_pop(order_sheet, food_column);
-
 	sheet *menu_sheet = table_get_sheet_by_name(self, L"MENU");
 	element *food_sheet_name = sheet_get_ele_by_index(menu_sheet, category_number - 1, 0);
 	sheet *food_sheet = table_get_sheet_by_key(self, food_sheet_name);
 	sheet_get_ele_by_index(food_sheet, food_number - 1, 2)->value.int_ += qty;
+	ele_free(food_no);
 }
 
 element *p__ordered_item_print(sheet *self) {
@@ -1799,8 +1806,7 @@ void p__payment(table *my_table, int table_number, element *amount) {
 		card_number = new_str(tmp_);
 
 		JMP1:
-		printf("Enter the card holder’s name: ");
-		card_holder_name = str_input();
+		card_holder_name = str_input("Enter the card holder’s name: ");
 		if (card_holder_name->str_object.len == 0) {
 			printf("Invalid input.\n");
 			str_free(card_holder_name);
@@ -1836,8 +1842,6 @@ void p__payment(table *my_table, int table_number, element *amount) {
 
 	sheet *payment_record_sheet = table_get_sheet_by_name(my_table, L"TRANSACTION_HISTORY");
 	sheet_append(payment_record_sheet, pay_record_column);
-
-	printf("Payment successful.\n");
 }
 
 void order_food(table *my_table) {
@@ -1848,68 +1852,78 @@ void order_food(table *my_table) {
 		printf("Empty category list\n");
 		return;
 	}
-
 	int table_number = (int) input_integer_question("Enter the table number: ", "Invalid table number.", 1, 100);
 	sheet_printf(category_sheet, "%i", "Category no.");
 
 	CATEGORY:
-	{
-		int category_number = (int) input_integer_question("Enter the category number: ", "Invalid category number.", 1,
-		                                                   category_sheet->element_count);
-		element *category_name = sheet_get_ele_by_index(category_sheet, category_number - 1, 0);
-		sheet *food_sheet = table_get_sheet_by_key(my_table, category_name);
-		if (food_sheet->element_count == 0) {
-			printf("Empty food list.\n");
+	{};
+	int category_number = (int) input_integer_question("Enter the category number: ", "Invalid category number.", 1,
+	                                                   category_sheet->element_count);
+	element *category_name = sheet_get_ele_by_index(category_sheet, category_number - 1, 0);
+	sheet *food_sheet = table_get_sheet_by_key(my_table, category_name);
+	if (food_sheet->element_count == 0) {
+		printf("Empty food list.\n");
+		goto CATEGORY;
+	}
+	sheet_printf(food_sheet, "%i", "Food no.");
+
+	FOOD_MENU:
+	{}; // order food
+	int food_number = (int) input_integer_question("Enter the food number: ", "Invalid food number.", 1,
+	                                               food_sheet->element_count);
+	int food_availability = (int) sheet_get_ele_by_index(food_sheet, food_number - 1, 2)->value.int_;
+	if (food_availability == 0) {
+		printf("Invalid food number.\n");
+		goto FOOD_MENU;
+	}
+	if (p__check_is_ordered(ordered_sheet, category_number, food_number)) {
+		printf("You have already selected the food\n");
+	} else {
+		int food_quantity = (int) input_integer_question("Enter the food item’s quantity: ", "Invalid quantity.", 1,
+		                                                 food_availability);
+		food_availability -= food_quantity;
+		// append the ordered items
+		p__ordered_item_sheet_append(ordered_sheet, sheet_get_col_by_index(food_sheet, food_number - 1),
+		                             category_number, food_number, food_quantity);
+	}
+	if (food_availability && input_yn_question("Do you want to order more food")) {
+		goto FOOD_MENU;
+	}
+	sheet_printf(category_sheet, "%i", "Category no.");
+	if (input_yn_question("Do you want to explore more categories")) {
+		goto CATEGORY;
+	}
+
+	CHECK_OUT:
+	{};
+	amount = p__ordered_item_print(ordered_sheet);
+	if (!input_yn_question("Do you want to check out")) {
+		if (input_yn_question("Do you want to add to the selected food list")) {
+			sheet_printf(category_sheet, "%i", "Category no.");
 			goto CATEGORY;
 		}
-		sheet_printf(food_sheet, "%i", "Food no.");
+		if (input_yn_question("Do you want to remove from the selected food list")) {
+			p__ordered_item_sheet_del(my_table, ordered_sheet, NULL);
+			goto CHECK_OUT;
+		}
+	}
 
-		FOOD_MENU:
-		{
-			// order food
-			int food_number = (int) input_integer_question("Enter the food number: ", "Invalid food number.", 1,
-			                                               food_sheet->element_count);
-			int food_availability = (int) sheet_get_ele_by_index(food_sheet, food_number - 1, 2)->value.int_;
-			if (food_availability == 0) {
-				printf("Invalid food number.\n");
-				goto FOOD_MENU;
-			}
-			if (p__check_is_ordered(ordered_sheet, category_number, food_number)) {
-				printf("You have already selected the food\n");
-			} else {
-				int food_quantity = (int) input_integer_question("Enter the food item’s quantity: ", "Invalid quantity.", 1,
-				                                                 food_availability);
-				food_availability -= food_quantity;
-				// append the ordered items
-				p__ordered_item_sheet_append(ordered_sheet, sheet_get_col_by_index(food_sheet, food_number - 1),
-				                             category_number, food_number, food_quantity);
-			}
-			if (food_availability && input_yn_question("Do you want to order more food")) {
-				goto FOOD_MENU;
-			}
-			sheet_printf(category_sheet, "%i", "Category no.");
-			if (input_yn_question("Do you want to explore more categories")) {
-				goto CATEGORY;
-			}
-
-			CHECK_OUT:
-			{}
-			amount = p__ordered_item_print(ordered_sheet);
-			if (!input_yn_question("Do you want to check out")) {
-				if (input_yn_question("Do you want to add to the selected food list")) {
-					sheet_printf(category_sheet, "%i", "Category no.");
-					goto CATEGORY;
-				}
-				if (input_yn_question("Do you want to remove from the selected food list")) {
-					p__ordered_item_sheet_del(my_table, ordered_sheet);
-					goto CHECK_OUT;
-				}
+	PAYMENT:{};
+	p__payment(my_table, table_number, amount);
+	bool is_succeed = flush_file(my_table, "Payment successful.\n", "Payment unsuccessful.\n");
+	if (is_succeed == false) {
+		if(input_integer_question("1. Cancel order 2. Change payment method (1/2)?:", "Invalid input.", 1, 2) == 2){
+			goto PAYMENT;
+		}
+		else{
+			for (uint32_t i = 0; i < ordered_sheet->element_count; i++){
+				p__ordered_item_sheet_del(my_table, ordered_sheet,ele_new_str_from_str(str_cpy(
+															 sheet_get_ele_by_index(ordered_sheet, i, 0)->value.string_)));
 			}
 		}
 	}
-	p__payment(my_table, table_number, amount);
+	ele_free(amount);
 	sheet_free(ordered_sheet);
-	flush_file(my_table);
 }
 
 ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
