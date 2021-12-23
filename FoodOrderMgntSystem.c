@@ -1773,12 +1773,12 @@ void p__ordered_item_sheet_append(sheet *self, column *food_column, int category
 
 void p__ordered_item_sheet_del(table *self, sheet *order_sheet, element *food_no) {
 	GOTO1:
-	{}
 	if (food_no == NULL) {
 		food_no = ele_new_str_from_str(str_input("Enter the food number you want to remove from the selected list: "));
 		if (sheet_get_col_by_name(order_sheet, food_no) == NULL) {
 			printf("Invalid food number.\n");
 			ele_free(food_no);
+			food_no = NULL;
 			goto GOTO1;
 		}
 	}
