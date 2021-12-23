@@ -1939,7 +1939,7 @@ void order_food(table *my_table) {
 
 	PAYMENT:
 	{};
-	p__payment(my_table, table_number, amount);
+	p__payment(my_table, table_number, amount); // do not free this amount since it stores in the transition.
 	bool is_succeed = flush_file(my_table, "Payment successful.\n", "Payment unsuccessful.\n");
 	if (is_succeed == false) {
 		if (input_integer_question("1. Cancel order 2. Change payment method (1/2)?:", "Invalid input.", 1, 2) == 2) {
@@ -1951,7 +1951,6 @@ void order_food(table *my_table) {
 			}
 		}
 	}
-	ele_free(amount);
 	sheet_free(ordered_sheet);
 }
 
