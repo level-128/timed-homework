@@ -920,8 +920,9 @@ void sheet_pop(sheet *self, column *my_column) {
 	element *hash_element = $(my_column, self->sheet_index_row);
 	dict_pop(self->sheet_index_dict, hash_element);
 	// because pop the list need to swap this node and the next node, assign the next column's father node as this node.
-	((column *)my_column->father_node->next_node->value)->father_node = my_column->father_node;
-
+	if (my_column->father_node->next_node != self->sheet_element->last_node) { // the last node's next node is an empty node
+		((column *) my_column->father_node->next_node->value)->father_node = my_column->father_node;
+	}
 	list_pop_by_node(self->sheet_element, my_column->father_node); // pop the column which stores in self->sheet_element
 	col_free(my_column);
 	self->len -= 1;
@@ -1774,7 +1775,7 @@ void p__ordered_item_sheet_del(table *self, sheet *order_sheet, element *food_no
 	GOTO1:
 	{}
 	if (food_no == NULL) {
-		food_no = ele_new_str_from_str(str_input("Enter the food number you want to remove from the selected list:"));
+		food_no = ele_new_str_from_str(str_input("Enter the food number you want to remove from the selected list: "));
 		if (sheet_get_col_by_name(order_sheet, food_no) == NULL) {
 			printf("Invalid food number.\n");
 			ele_free(food_no);
