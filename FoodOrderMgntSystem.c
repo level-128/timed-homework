@@ -1899,7 +1899,7 @@ void order_food(table *my_table) {
 	element *category_name = sheet_get_ele_by_index(category_sheet, category_number - 1, 0);
 	sheet *food_sheet = table_get_sheet_by_key(my_table, category_name);
 	if (food_sheet->len == 0) {
-		printf("Empty food list.\n");
+		printf("\nEmpty food list.\n");
 		goto CATEGORY;
 	}
 	sheet_printf(food_sheet, "%i", "Food no.");
@@ -1909,11 +1909,11 @@ void order_food(table *my_table) {
 	int food_number = (int) input_integer_question("Enter the food number: ", "Invalid food number.", 1, food_sheet->len);
 	int food_availability = (int) sheet_get_ele_by_index(food_sheet, food_number - 1, 2)->value.int_;
 	if (food_availability == 0) {
-		printf("Invalid food number.\n");
+		printf("\nInvalid food number.\n");
 		goto FOOD_MENU;
 	}
 	if (p__check_is_ordered(ordered_sheet, category_number, food_number)) {
-		printf("You have already selected the food\n");
+		printf("\nYou have already selected the food\n");
 	} else {
 		int food_quantity = (int) input_integer_question("Enter the food item’s quantity: ", "Invalid quantity.", 1, food_availability);
 		food_availability -= food_quantity;
