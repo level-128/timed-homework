@@ -1812,7 +1812,7 @@ element *p__ordered_item_print(sheet *self) {
 		ele_add(tmp1, sum, sum);
 	}
 	ele_free(tmp1);
-	printf("Total: ");
+	printf("\nTotal: ");
 	ele_printf(sum);
 	printf("\n");
 	return sum;
