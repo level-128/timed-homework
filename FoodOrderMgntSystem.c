@@ -83,7 +83,7 @@
 jmp_buf JMP;
 
 const static char *MENU_FILE_NAME = "menu.csv";
-const static char *TRANSITION_HISTORY_FILE_NAME = "trans_hist.csv";
+const static char *TRANSITION_HISTORY_FILE_NAME = "transaction.csv";
 const static int DEFAULT_DICT_SIZE = 500;
 const static double REHASH_LIMIT = 0.7;
 const static uint64_t PRIME = 51539607599;
@@ -456,7 +456,9 @@ void str_printf(string *self) {
 
 // return a user input string.
 string *str_input(char *prompt) {
-	printf("%s", prompt);
+	if (*prompt) {
+		printf("\n%s", prompt);
+	}
 	string *input_list = new_str(NULL);
 	int c;
 	while ((c = getchar()) != '\n') {
@@ -939,6 +941,7 @@ void sheet_pop_by_name(sheet *self, element *index) {
 }
 
 void sheet_printf(sheet *self_sheet, char *index_prefix, char *index_name) {
+	printf("\n");
 	if (self_sheet->len == 0) {
 		printf("Empty category list\n");
 		return;
@@ -948,6 +951,7 @@ void sheet_printf(sheet *self_sheet, char *index_prefix, char *index_name) {
 		printf("%s\t", index_name);
 	}
 	col_printf(self_sheet->titles);
+	printf("\n");
 	for (uint32_t column_number = 0; column_number < self_sheet->len; column_number++) {
 		if (is_print_index) {
 			printf(index_prefix, column_number + 1);
@@ -1248,7 +1252,7 @@ bool flush_file(table *self, char *succeed_prompt, const char *failed_prompt) {
 		if (!*failed_prompt) {
 			ERROR(4, "failed when tries to write file '", MENU_FILE_NAME, "' reason: ", strerror(errno));
 		} else {
-			printf("%s", failed_prompt);
+			printf("\n%s", failed_prompt);
 			return false;
 		}
 	}
@@ -1276,7 +1280,7 @@ bool flush_file(table *self, char *succeed_prompt, const char *failed_prompt) {
 	sheet_write_out(trans_hist_sheet, trans_hist_file);
 	sheet_write_out(password_sheet, trans_hist_file);
 	fclose(trans_hist_file);
-	printf("%s", succeed_prompt);
+	printf("\n%s", succeed_prompt);
 	return true;
 }
 
@@ -1287,7 +1291,7 @@ bool flush_file(table *self, char *succeed_prompt, const char *failed_prompt) {
 bool input_yn_question(char *message) {
 	string *input;
 	while (true) {
-		printf("%s (y/n)?: ", message);
+		printf("\n%s (y/n)?: ", message);
 		input = str_input("");
 		if (str_cmpw(input, L"y") || str_cmpw(input, L"Y")) {
 			str_free(input);
@@ -1298,7 +1302,7 @@ bool input_yn_question(char *message) {
 			return false;
 		}
 		str_free(input);
-		printf("Invalid input.\n");
+		printf("\nInvalid input.\n");
 	}
 }
 
@@ -1306,7 +1310,7 @@ wchar_t *
 input_option_question(char *message, char *error_message, int option_number, wchar_t *options[], bool print_options) {
 	string *input;
 	while (true) {
-		printf("%s", message);
+		printf("\n%s", message);
 		if (print_options) {
 			printf(" (%ls", options[0]);
 			for (int i = 1; i < option_number; i++) {
@@ -1322,7 +1326,7 @@ input_option_question(char *message, char *error_message, int option_number, wch
 			}
 		}
 		str_free(input);
-		printf("%s\n", error_message);
+		printf("\n%s\n", error_message);
 	}
 }
 
@@ -1338,7 +1342,7 @@ int64_t input_integer_question(char *message, char *error_message, int64_t min_v
 		begin_ptr = str_out(input);
 		result = wcstoll(begin_ptr, &end_ptr, 10);
 		if (*end_ptr != '\0' || result > max_value || result < min_value || *begin_ptr == '\0') {
-			printf("%s\n", error_message);
+			printf("\n%s\n", error_message);
 			str_free(input);
 			free(begin_ptr);
 			continue;
@@ -1368,7 +1372,7 @@ element *input_number_question(char *message, char *error_message) {
 			return ele_new_float(result_float);
 		}
 		free(input_str);
-		printf("%s\n", error_message);
+		printf("\n%s\n", error_message);
 	}
 }
 
@@ -1455,7 +1459,7 @@ void p__input_date(uint8_t *year, uint8_t *month, uint8_t *day, char *msg) {
 		string *raw_input = str_input(msg);
 
 		if (!p__parse_date(raw_input, year, month, day) || !p__is_valid_date(*year, *month, *day)) {
-			printf("Invalid date.\n");
+			printf("\nInvalid date.\n");
 			str_free(raw_input);
 			continue;
 		}
@@ -1482,7 +1486,7 @@ bool check_password(table *self) {
 	string *password =
 			  sheet_get_ele_by_index(table_get_sheet_by_name(self, L"PASSWORD"), 0, 0)->value.string_;
 	if (!str_cmp(password, input_password)) {
-		printf("Invalid password.\n");
+		printf("\nInvalid password.\n");
 		str_free(input_password);
 		return false;
 	}
@@ -1494,7 +1498,7 @@ bool check_password(table *self) {
 // admin options:
 void change_password(table *self) {
 	INPUT_PW:
-	printf("Enter the old password: ");
+	printf("\nEnter the old password: ");
 	if (!check_password(self)) {
 		if (input_yn_question("Do you want to change the password")) {
 			goto INPUT_PW;
@@ -1503,17 +1507,17 @@ void change_password(table *self) {
 		}
 	}
 	ENTER_NEW_PW:
-	printf("Enter new password: ");
+	printf("\nEnter new password: ");
 	string *new_password = p__input_password();
 	if (len(new_password) < 5 || len(new_password) > 15) {
-		printf("Password can’t be less than 5 characters and more than 15 characters.\n");
+		printf("\nPassword can’t be less than 5 characters and more than 15 characters.\n");
 		str_free(new_password);
 		goto ENTER_NEW_PW;
 	}
-	printf("Enter the new password again: ");
+	printf("\nEnter the new password again: ");
 	string *new_password2 = p__input_password();
 	if (!str_cmp(new_password, new_password2)) {
-		printf("Re-entered new password and new password don’t match.\n");
+		printf("\nRe-entered new password and new password don’t match.\n");
 		str_free(new_password);
 		str_free(new_password2);
 		goto ENTER_NEW_PW;
@@ -1522,7 +1526,7 @@ void change_password(table *self) {
 	element *password = sheet_get_ele_by_index(table_get_sheet_by_name(self, L"PASSWORD"), 0, 0);
 	str_free(password->value.string_);
 	password->value.string_ = new_password;
-	printf("Password successfully changed.\n");
+	printf("\nPassword successfully changed.\n");
 }
 
 void add_category(table *self) {
@@ -1572,7 +1576,7 @@ void add_category(table *self) {
 void delete_category(table *self) {
 	sheet *menu_sheet = table_get_sheet_by_name(self, L"MENU");
 	if (menu_sheet->len == 0) {
-		printf("Empty category list.\n");
+		printf("\nEmpty category list.\n");
 		return;
 	}
 	while (true) {
@@ -1632,14 +1636,14 @@ void delete_food_item(table *self) {
 	while (true) {
 		sheet *menu_sheet = table_get_sheet_by_name(self, L"MENU");
 		if (menu_sheet->len == 0) {
-			printf("Empty category list.\n");
+			printf("\nEmpty category list.\n");
 			return;
 		}
 		int64_t category_number = input_integer_question("Enter a category number:", "Invalid input.", 1, menu_sheet->len);
 		sheet *food_sheet = table_get_sheet_by_key(self, sheet_get_ele_by_index(menu_sheet, category_number - 1, 0));
 
 		if (food_sheet->len == 0) {
-			printf("Empty food list.\n");
+			printf("\nEmpty food list.\n");
 			return;
 		}
 		int64_t food = input_integer_question("Enter a food number:", "Invalid input.", 1, food_sheet->len);
@@ -1662,7 +1666,7 @@ void view_food_items(table *self) {
 	element *category_name = sheet_get_ele_by_index(menu_sheet, category_number - 1, 0);
 
 	wchar_t *temp = str_out(category_name->value.string_);
-	printf("Category name: %ls\n", temp);
+	printf("Category name: %ls\n\n", temp);
 	free(temp);
 	sheet_printf(table_get_sheet_by_key(self, category_name), "%i", "Food no.");
 }
@@ -1673,14 +1677,15 @@ void show_transit_history(table *self) {
 	p__input_date(&year_from, &month_from, &day_from, "Enter start date: ");
 	p__input_date(&year_to, &month_to, &day_to, "Enter end date: ");
 	if (p__compare_date(year_from, month_from, day_from, year_to, month_to, day_to) == 1) {
-		printf("Start date must be on or before the end date.\n");
+		printf("\nStart date must be on or before the end date.\n");
 		goto JMP1;
 	}
-
+	printf("\n");
 	uint8_t year, month, day;
 	element *total = ele_new_float(0.0);
 	sheet *transit_sheet = table_get_sheet_by_name(self, L"TRANSACTION_HISTORY");
 	col_printf(transit_sheet->titles);
+	printf("\n");
 	for (uint32_t column_number = 0; column_number < transit_sheet->len; column_number++) {
 		p__parse_date(val(sheet_get_col_by_index(transit_sheet, column_number), 5).string_,
 		              &year, &month, &day);
@@ -1691,19 +1696,19 @@ void show_transit_history(table *self) {
 			}
 		}
 	}
-	printf("Total amount: ");
+	printf("\nTotal amount: ");
 	ele_printf(total);
 	printf("\n");
 	ele_free(total);
 }
 
 void admin_section(table *self) {
-	printf("Enter the password: ");
+	printf("\nEnter the password: ");
 	if (!check_password(self)) {
 		return;
 	}
 	while (true) {
-		printf("1. Add a category\n"
+		printf("\n1. Add a category\n"
 		       "2. Delete a category\n"
 		       "3. View categories\n"
 		       "4. Add a food item\n"
@@ -1776,7 +1781,7 @@ void p__ordered_item_sheet_del(table *self, sheet *order_sheet, element *food_no
 	if (food_no == NULL) {
 		food_no = ele_new_str_from_str(str_input("Enter the food number you want to remove from the selected list: "));
 		if (sheet_get_col_by_name(order_sheet, food_no) == NULL) {
-			printf("Invalid food number.\n");
+			printf("\nInvalid food number.\n");
 			ele_free(food_no);
 			food_no = NULL;
 			goto GOTO1;
@@ -1840,12 +1845,12 @@ void p__payment(table *my_table, int table_number, element *amount) {
 		JMP1:
 		card_holder_name = str_input("Enter the card holder’s name: ");
 		if (len(card_holder_name) == 0) {
-			printf("Invalid input.\n");
+			printf("\nInvalid input.\n");
 			str_free(card_holder_name);
 			goto JMP1;
 		}
 		if (len(card_holder_name) > 50) {
-			printf("Input name is more than 50 characters.\n");
+			printf("\nInput name is more than 50 characters.\n");
 			str_free(card_holder_name);
 			goto JMP1;
 		}
@@ -1960,7 +1965,7 @@ void order_food(table *my_table) {
 void main_menu(table *my_table) {
 	setjmp(JMP);
 	while (1) {
-		printf("1)  Order food\n2)  Admin section\n3)  Exit\n");
+		printf("\n1)  Order food\n2)  Admin section\n3)  Exit\n");
 		int64_t option = input_integer_question("Option: ", "Unknown option.", 0, 3);
 		switch (option) {
 			case 1:
