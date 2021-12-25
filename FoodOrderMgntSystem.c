@@ -67,27 +67,32 @@
 #include <signal.h>
 #include <errno.h>
 #include <stdarg.h>
-#include <setjmp.h>
 
 
 #define $(list__, index__) list_get_node((list *)(list__), index__)->value
 #define val(list__, index__) (((element *)(list_get_node((list *)(list__), index__)->value))->value)
 #define type(x__) x__->type
 #define len(x__) x__->list_object.len
+#define ERROR(msg, ...) do {\
+                        printf("\n\033[0;31mERROR -- at file: %s, line: %d\n\t" msg\
+                        "\033[0m\n", __FILE__, __LINE__, ##__VA_ARGS__);           \
+                        printf("program exits with error code %i\n", errno);       \
+                        exit(errno);                                               \
+                           } while (0)
+#define NL putchar('\n');
+#define RETURN goto RETURN_
+#define printf_l(x__) printf("\n%s\n", x__)
 
 #define TINT_ 1
 #define TFLOAT_ 2
 #define TSTRING_ 3
 #define THEADER_ 4
 
-jmp_buf JMP;
-
-const static char *MENU_FILE_NAME = "menu.csv";
-const static char *TRANSITION_HISTORY_FILE_NAME = "transaction.csv";
+char *MENU_FILE_NAME = "menu.csv";
+char *TRANSITION_HISTORY_FILE_NAME = "transaction.csv";
 const static int DEFAULT_DICT_SIZE = 500;
 const static double REHASH_LIMIT = 0.7;
 const static uint64_t PRIME = 51539607599;
-
 /* this prime is the first prime starting at 1 << 35 + 1 << 34.
 it is computed by using following Python code:
 
@@ -100,25 +105,6 @@ this prime will be used in the p__dict_hash function as the modular.
 
 make sure your system has sympy installed. if not, run 'pip install sympy' in your system console.
 */
-
-
-void ERROR(int arg_count, ...) {
-	va_list args;
-	va_start(args, arg_count);
-	printf("\033[0;31m");
-	printf("\nERROR -- ");
-	for (uint32_t i = 0; i < arg_count; i++) {
-		printf("%s", va_arg(args, char *));
-	}
-
-	printf("\033[0m\n\tPress enter to exit. ");
-	while (1) {
-		if (getchar() == '\n') {
-			break;
-		}
-	}
-	exit(errno);
-}
 
 
 // node in the list.
@@ -226,7 +212,7 @@ node *list_get_node(list *self, uint32_t index) {
 		return self->first_node;
 	}
 	if (index >= self->len || index < 0) {
-		ERROR(1, "List out of index");
+		ERROR("List out of index, list at %p has length %zu, but tries to index %ui", self, self->len, index);
 	}
 
 	size_t start_index;
@@ -254,7 +240,6 @@ void list_append(void *self, void *newval) {
 
 	last_node->value = newval;
 	last_node->next_node = new_element;
-
 	((list *) self)->last_node = new_element;
 	((list *) self)->len++;
 }
@@ -302,7 +287,6 @@ void list_pop_by_node(list *self, node *pop_node) {
 void list_pop_by_index(list *self, size_t index) {
 	list_pop_by_node(self, list_get_node(self, index));
 }
-
 // free the list itself.
 void list_free(list *self) {
 	node *current_element = self->first_node;
@@ -394,7 +378,7 @@ void str_insert_by_index(string *self, wchar_t *str, uint32_t index) {
 // ex: "hello" replace "l" to "!!" return "he!!!!o"
 void str_replace(string *self, wchar_t *from, wchar_t *to, uint32_t max_replace_time) {
 	if (!wcscmp(to, L"")) {
-		ERROR(1, "str_replace function tries to replace to an empty string.");
+		ERROR("str_replace function tries to replace to an empty string.");
 	}
 	uint32_t index = 0;
 	uint32_t char_to_len = wcslen(to);
@@ -457,7 +441,8 @@ void str_printf(string *self) {
 // return a user input string.
 string *str_input(char *prompt) {
 	if (*prompt) {
-		printf("\n%s", prompt);
+		NL
+		printf("%s", prompt);
 	}
 	string *input_list = new_str(NULL);
 	int c;
@@ -572,7 +557,7 @@ void ele_add(element *x, element *y, element *result) {
 			return;
 		}
 	}
-	ERROR(1, "Type Error: ele_add could only add int and float object");
+	ERROR("Type Error: ele_add could only add int and float object");
 }
 
 // multiply elements, return x * y.
@@ -598,7 +583,7 @@ void ele_mul(element *x, element *y, element *result) {
 			return;
 		}
 	}
-	ERROR(1, "Type Error: ele_mul could only multiply int and float object");
+	ERROR("Type Error: ele_mul could only multiply int and float object");
 }
 
 // copy the element
@@ -713,7 +698,7 @@ void col_printf(column *column) {
 		printf("\t");
 	}
 	ele_printf($(column, len(column) - 1));
-	printf("\n");
+	NL
 }
 
 void col_write_out(column *self, FILE *stream) {
@@ -941,17 +926,17 @@ void sheet_pop_by_name(sheet *self, element *index) {
 }
 
 void sheet_printf(sheet *self_sheet, char *index_prefix, char *index_name) {
-	printf("\n");
 	if (self_sheet->len == 0) {
-		printf("Empty category list\n");
+		printf_l("Empty category list");
 		return;
 	}
+	NL
 	bool is_print_index = strlen(index_prefix) && strlen(index_name);
 	if (is_print_index) {
 		printf("%s\t", index_name);
 	}
 	col_printf(self_sheet->titles);
-	printf("\n");
+	NL
 	for (uint32_t column_number = 0; column_number < self_sheet->len; column_number++) {
 		if (is_print_index) {
 			printf(index_prefix, column_number + 1);
@@ -1193,21 +1178,22 @@ void csv_open_file(const char *file_name, table *table) {
 	}
 	int file_handle = open(file_name, O_RDWR | O_CREAT);
 	if (file_handle < 0) {
-		ERROR(2, "csv table load failed, ", strerror(errno));
+		ERROR("csv table load failed, reason: %s", strerror(errno));
 	}
 	if (stat(file_name, &stat_) == -1) {
-		ERROR(4, "can't read the status of the file: ", file_name, " reason: ", strerror(errno));
+		ERROR("can't read the status of the file: %s, reason %s", file_name, strerror(errno));
 	}
 	if (stat_.st_size == 0) {
-		ERROR(3, "the file: ", file_name, " is empty. ");
+		ERROR("the file: %s is empty. ", file_name);
 	}
 
 	char *file_ptr = mmap(NULL, stat_.st_size, PROT_READ, MAP_PRIVATE, file_handle, 0);
 	close(file_handle); // close the file handle DOES NOT unmap the file.
 
 	if (file_ptr == (char *) 0xffffffffffffffff) {
-		ERROR(3, "MMIO failed, ", strerror(errno),
-		      ". make sure the file is not located at the remote machine or access across VMs (for example: visiting file outside WSL).");
+		ERROR("MMIO failed, with reason: %s"
+		      ". make sure the file is not located at the remote machine or access across VMs (for example: visiting file outside WSL).",
+		      strerror(errno));
 	}
 
 	char *buf_con = file_ptr;
@@ -1247,12 +1233,13 @@ void csv_open(table *self) {
 }
 
 bool flush_file(table *self, char *succeed_prompt, const char *failed_prompt) {
+	NL
 	FILE *menu_file = fopen(MENU_FILE_NAME, "w");
 	if (menu_file == NULL) {
 		if (!*failed_prompt) {
-			ERROR(4, "failed when tries to write file '", MENU_FILE_NAME, "' reason: ", strerror(errno));
+			ERROR("failed when tries to write file '%s' reason: %s", MENU_FILE_NAME, strerror(errno));
 		} else {
-			printf("\n%s", failed_prompt);
+			printf("%s\n", failed_prompt);
 			return false;
 		}
 	}
@@ -1269,9 +1256,9 @@ bool flush_file(table *self, char *succeed_prompt, const char *failed_prompt) {
 	FILE *trans_hist_file = fopen(TRANSITION_HISTORY_FILE_NAME, "w");
 	if (menu_file == NULL) {
 		if (*failed_prompt) {
-			ERROR(4, "failed when tries to write file '", TRANSITION_HISTORY_FILE_NAME, "' reason: ", strerror(errno));
+			ERROR("failed when tries to write file '%s' reason: %s", TRANSITION_HISTORY_FILE_NAME, strerror(errno));
 		} else {
-			printf("%s", failed_prompt);
+			printf("%s\n", failed_prompt);
 			return false;
 		}
 	}
@@ -1280,7 +1267,7 @@ bool flush_file(table *self, char *succeed_prompt, const char *failed_prompt) {
 	sheet_write_out(trans_hist_sheet, trans_hist_file);
 	sheet_write_out(password_sheet, trans_hist_file);
 	fclose(trans_hist_file);
-	printf("\n%s", succeed_prompt);
+	printf("%s\n", succeed_prompt);
 	return true;
 }
 
@@ -1291,7 +1278,8 @@ bool flush_file(table *self, char *succeed_prompt, const char *failed_prompt) {
 bool input_yn_question(char *message) {
 	string *input;
 	while (true) {
-		printf("\n%s (y/n)?: ", message);
+		NL
+		printf("%s (y/n)?: ", message);
 		input = str_input("");
 		if (str_cmpw(input, L"y") || str_cmpw(input, L"Y")) {
 			str_free(input);
@@ -1302,7 +1290,7 @@ bool input_yn_question(char *message) {
 			return false;
 		}
 		str_free(input);
-		printf("\nInvalid input.\n");
+		printf_l("Invalid input.");
 	}
 }
 
@@ -1310,7 +1298,8 @@ wchar_t *
 input_option_question(char *message, char *error_message, int option_number, wchar_t *options[], bool print_options) {
 	string *input;
 	while (true) {
-		printf("\n%s", message);
+		NL
+		printf("%s", message);
 		if (print_options) {
 			printf(" (%ls", options[0]);
 			for (int i = 1; i < option_number; i++) {
@@ -1326,7 +1315,7 @@ input_option_question(char *message, char *error_message, int option_number, wch
 			}
 		}
 		str_free(input);
-		printf("\n%s\n", error_message);
+		printf_l(error_message);
 	}
 }
 
@@ -1342,7 +1331,7 @@ int64_t input_integer_question(char *message, char *error_message, int64_t min_v
 		begin_ptr = str_out(input);
 		result = wcstoll(begin_ptr, &end_ptr, 10);
 		if (*end_ptr != '\0' || result > max_value || result < min_value || *begin_ptr == '\0') {
-			printf("\n%s\n", error_message);
+			printf_l(error_message);
 			str_free(input);
 			free(begin_ptr);
 			continue;
@@ -1372,11 +1361,15 @@ element *input_number_question(char *message, char *error_message) {
 			return ele_new_float(result_float);
 		}
 		free(input_str);
-		printf("\n%s\n", error_message);
+		printf_l(error_message);
 	}
 }
 
-string *p__input_password() {
+string *p__input_password(char *msg) {
+	if (*msg) {
+		NL
+		printf("%s", msg);
+	}
 	struct termios old_cfg, new_cfg;
 	string *password = new_str(L"");
 	int c;
@@ -1459,7 +1452,7 @@ void p__input_date(uint8_t *year, uint8_t *month, uint8_t *day, char *msg) {
 		string *raw_input = str_input(msg);
 
 		if (!p__parse_date(raw_input, year, month, day) || !p__is_valid_date(*year, *month, *day)) {
-			printf("\nInvalid date.\n");
+			printf_l("Invalid date.");
 			str_free(raw_input);
 			continue;
 		}
@@ -1481,12 +1474,11 @@ int p__compare_date(uint8_t year1, uint8_t month1, uint8_t day1, uint8_t year2, 
 	return 0;
 }
 
-bool check_password(table *self) {
-	string *input_password = p__input_password();
+bool check_password(table *self, string * input_password) {
 	string *password =
 			  sheet_get_ele_by_index(table_get_sheet_by_name(self, L"PASSWORD"), 0, 0)->value.string_;
 	if (!str_cmp(password, input_password)) {
-		printf("\nInvalid password.\n");
+		printf_l("Invalid password.");
 		str_free(input_password);
 		return false;
 	}
@@ -1497,9 +1489,8 @@ bool check_password(table *self) {
 ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 // admin options:
 void change_password(table *self) {
-	INPUT_PW:
-	printf("\nEnter the old password: ");
-	if (!check_password(self)) {
+	INPUT_PW:{}
+	if (!check_password(self, p__input_password("Enter the old password: "))) {
 		if (input_yn_question("Do you want to change the password")) {
 			goto INPUT_PW;
 		} else {
@@ -1507,17 +1498,16 @@ void change_password(table *self) {
 		}
 	}
 	ENTER_NEW_PW:
-	printf("\nEnter new password: ");
-	string *new_password = p__input_password();
+	{};
+	string *new_password = p__input_password("Enter new password: ");
 	if (len(new_password) < 5 || len(new_password) > 15) {
-		printf("\nPassword can’t be less than 5 characters and more than 15 characters.\n");
+		printf_l("Password can’t be less than 5 characters and more than 15 characters.");
 		str_free(new_password);
 		goto ENTER_NEW_PW;
 	}
-	printf("\nEnter the new password again: ");
-	string *new_password2 = p__input_password();
+	string *new_password2 = p__input_password("Enter the new password again: ");
 	if (!str_cmp(new_password, new_password2)) {
-		printf("\nRe-entered new password and new password don’t match.\n");
+		printf_l("Re-entered new password and new password don’t match.");
 		str_free(new_password);
 		str_free(new_password2);
 		goto ENTER_NEW_PW;
@@ -1526,28 +1516,26 @@ void change_password(table *self) {
 	element *password = sheet_get_ele_by_index(table_get_sheet_by_name(self, L"PASSWORD"), 0, 0);
 	str_free(password->value.string_);
 	password->value.string_ = new_password;
-	printf("\nPassword successfully changed.\n");
+	printf_l("Password successfully changed.");
 }
 
 void add_category(table *self) {
 	sheet *menu_sheet = table_get_sheet_by_name(self, L"MENU");
+	element *category_name = NULL;
 
 	ADD_CATEGORY:
-	{};
-	element *category_name = ele_new_str_from_str(str_input("Enter a category name: "));
+	ele_free(category_name);
+	category_name = ele_new_str_from_str(str_input("Enter a category name: "));
 	if (len(category_name->value.string_) == 0) {
 		printf("Invalid input.\n");
-		ele_free(category_name);
 		goto ADD_CATEGORY;
 	}
 	if (len(category_name->value.string_) > 50) {
 		printf("Category name can’t be more than 50 characters.\n");
-		ele_free(category_name);
 		goto ADD_CATEGORY;
 	}
 	if (sheet_get_col_by_name(menu_sheet, category_name)) {
 		printf("The category you entered is already on the list.\n");
-		ele_free(category_name);
 		goto ADD_CATEGORY;
 	} else {
 		column *new_col = new_column();
@@ -1566,7 +1554,7 @@ void add_category(table *self) {
 				  0
 		);
 		table_append_sheet(self, food_sheet);
-		flush_file(self, "Successfully created category.\n", "Category creation unsuccessful.\n");
+		flush_file(self, "Successfully created category.", "Category creation unsuccessful.");
 	}
 	if (input_yn_question("Do you want to add more categories")) {
 		goto ADD_CATEGORY;
@@ -1576,7 +1564,7 @@ void add_category(table *self) {
 void delete_category(table *self) {
 	sheet *menu_sheet = table_get_sheet_by_name(self, L"MENU");
 	if (menu_sheet->len == 0) {
-		printf("\nEmpty category list.\n");
+		printf_l("Empty category list.");
 		return;
 	}
 	while (true) {
@@ -1584,7 +1572,7 @@ void delete_category(table *self) {
 		                                       menu_sheet->len);
 		sheet_pop_by_index(menu_sheet, index - 1);
 
-		flush_file(self, "Successfully deleted.\n", "Unsuccessful deletion.\n");
+		flush_file(self, "Successfully deleted.", "Unsuccessful deletion.");
 		if (!input_yn_question("Do you want to delete more categories")) {
 			break;
 		}
@@ -1599,7 +1587,7 @@ void view_category(table *self) {
 void add_food_item(table *self) {
 	sheet *menu_sheet = table_get_sheet_by_name(self, L"MENU");
 	if (menu_sheet->len == 0) {
-		printf("Empty category list.\n");
+		printf_l("Empty category list.");
 		return;
 	}
 	while (true) {
@@ -1624,7 +1612,7 @@ void add_food_item(table *self) {
 			list_append(food_column, ele_new_str_from_str(description));
 
 			sheet_append(food_sheet, food_column);
-			flush_file(self, "Successfully created food record.\n", "Food record creation unsuccessful.\n");
+			flush_file(self, "Successfully created food record.", "Food record creation unsuccessful.");
 		}
 		if (!input_yn_question("Do you want to add more food records")) {
 			break;
@@ -1636,20 +1624,20 @@ void delete_food_item(table *self) {
 	while (true) {
 		sheet *menu_sheet = table_get_sheet_by_name(self, L"MENU");
 		if (menu_sheet->len == 0) {
-			printf("\nEmpty category list.\n");
+			printf_l("Empty category list.");
 			return;
 		}
 		int64_t category_number = input_integer_question("Enter a category number:", "Invalid input.", 1, menu_sheet->len);
 		sheet *food_sheet = table_get_sheet_by_key(self, sheet_get_ele_by_index(menu_sheet, category_number - 1, 0));
 
 		if (food_sheet->len == 0) {
-			printf("\nEmpty food list.\n");
+			printf_l("Empty food list.");
 			return;
 		}
 		int64_t food = input_integer_question("Enter a food number:", "Invalid input.", 1, food_sheet->len);
 
 		sheet_pop_by_index(food_sheet, food - 1);
-		flush_file(self, "Successfully deleted.\n", "Unsuccessful deletion.\n");
+		flush_file(self, "Successfully deleted.", "Unsuccessful deletion.");
 		if (!input_yn_question("Do you want to delete more food items")) {
 			break;
 		}
@@ -1659,7 +1647,7 @@ void delete_food_item(table *self) {
 void view_food_items(table *self) {
 	sheet *menu_sheet = table_get_sheet_by_name(self, L"MENU");
 	if (menu_sheet->len == 0) {
-		printf("Empty category list.\n");
+		printf_l("Empty category list.");
 		return;
 	}
 	int64_t category_number = input_integer_question("Enter a category number:", "Invalid input.", 1, menu_sheet->len);
@@ -1677,15 +1665,15 @@ void show_transit_history(table *self) {
 	p__input_date(&year_from, &month_from, &day_from, "Enter start date: ");
 	p__input_date(&year_to, &month_to, &day_to, "Enter end date: ");
 	if (p__compare_date(year_from, month_from, day_from, year_to, month_to, day_to) == 1) {
-		printf("\nStart date must be on or before the end date.\n");
+		printf_l("Start date must be on or before the end date.");
 		goto JMP1;
 	}
-	printf("\n");
+	NL
 	uint8_t year, month, day;
 	element *total = ele_new_float(0.0);
 	sheet *transit_sheet = table_get_sheet_by_name(self, L"TRANSACTION_HISTORY");
 	col_printf(transit_sheet->titles);
-	printf("\n");
+	NL
 	for (uint32_t column_number = 0; column_number < transit_sheet->len; column_number++) {
 		p__parse_date(val(sheet_get_col_by_index(transit_sheet, column_number), 5).string_,
 		              &year, &month, &day);
@@ -1696,19 +1684,21 @@ void show_transit_history(table *self) {
 			}
 		}
 	}
-	printf("\nTotal amount: ");
+	NL
+	printf("Total amount: ");
 	ele_printf(total);
-	printf("\n");
+	NL
 	ele_free(total);
 }
 
 void admin_section(table *self) {
-	printf("\nEnter the password: ");
-	if (!check_password(self)) {
+	string *input_password = p__input_password("Enter the password: ");
+	if (!check_password(self, input_password)) {
 		return;
 	}
 	while (true) {
-		printf("\n1. Add a category\n"
+		NL
+		printf("1. Add a category\n"
 		       "2. Delete a category\n"
 		       "3. View categories\n"
 		       "4. Add a food item\n"
@@ -1743,9 +1733,9 @@ void admin_section(table *self) {
 				change_password(self);
 				break;
 			default:
-				flush_file(self, "", "");
+//				flush_file(self, "", "");
 				// not save tolerant, if failed to flush the file, prompt error message and then press enter to crash the program.
-				// if you decided to achieve save tolerant, commit this line of code.
+				// un-commit this line of code to activate this feature.
 				return;
 		}
 	}
@@ -1781,7 +1771,7 @@ void p__ordered_item_sheet_del(table *self, sheet *order_sheet, element *food_no
 	if (food_no == NULL) {
 		food_no = ele_new_str_from_str(str_input("Enter the food number you want to remove from the selected list: "));
 		if (sheet_get_col_by_name(order_sheet, food_no) == NULL) {
-			printf("\nInvalid food number.\n");
+			printf_l("Invalid food number.");
 			ele_free(food_no);
 			food_no = NULL;
 			goto GOTO1;
@@ -1812,9 +1802,10 @@ element *p__ordered_item_print(sheet *self) {
 		ele_add(tmp1, sum, sum);
 	}
 	ele_free(tmp1);
-	printf("\nTotal: ");
+	NL
+	printf("Total: ");
 	ele_printf(sum);
-	printf("\n");
+	NL
 	return sum;
 }
 
@@ -1845,12 +1836,12 @@ void p__payment(table *my_table, int table_number, element *amount) {
 		JMP1:
 		card_holder_name = str_input("Enter the card holder’s name: ");
 		if (len(card_holder_name) == 0) {
-			printf("\nInvalid input.\n");
+			printf_l("Invalid input.");
 			str_free(card_holder_name);
 			goto JMP1;
 		}
 		if (len(card_holder_name) > 50) {
-			printf("\nInput name is more than 50 characters.\n");
+			printf_l("Input name is more than 50 characters.");
 			str_free(card_holder_name);
 			goto JMP1;
 		}
@@ -1887,8 +1878,8 @@ void order_food(table *my_table) {
 	sheet *ordered_sheet = p__ordered_item_sheet_create();
 	sheet *category_sheet = table_get_sheet_by_name(my_table, L"MENU");
 	if (category_sheet->len == 0) {
-		printf("Empty category list\n");
-		return;
+		printf_l("Empty category list");
+		RETURN;
 	}
 	int table_number = (int) input_integer_question("Enter the table number: ", "Invalid table number.", 1, 100);
 	sheet_printf(category_sheet, "%i", "Category no.");
@@ -1899,7 +1890,7 @@ void order_food(table *my_table) {
 	element *category_name = sheet_get_ele_by_index(category_sheet, category_number - 1, 0);
 	sheet *food_sheet = table_get_sheet_by_key(my_table, category_name);
 	if (food_sheet->len == 0) {
-		printf("\nEmpty food list.\n");
+		printf_l("Empty food list.");
 		goto CATEGORY;
 	}
 	sheet_printf(food_sheet, "%i", "Food no.");
@@ -1909,11 +1900,11 @@ void order_food(table *my_table) {
 	int food_number = (int) input_integer_question("Enter the food number: ", "Invalid food number.", 1, food_sheet->len);
 	int food_availability = (int) sheet_get_ele_by_index(food_sheet, food_number - 1, 2)->value.int_;
 	if (food_availability == 0) {
-		printf("\nInvalid food number.\n");
+		printf_l("Invalid food number.");
 		goto FOOD_MENU;
 	}
 	if (p__check_is_ordered(ordered_sheet, category_number, food_number)) {
-		printf("\nYou have already selected the food\n");
+		printf_l("You have already selected the food");
 	} else {
 		int food_quantity = (int) input_integer_question("Enter the food item’s quantity: ", "Invalid quantity.", 1, food_availability);
 		food_availability -= food_quantity;
@@ -1947,7 +1938,7 @@ void order_food(table *my_table) {
 	PAYMENT:
 	{};
 	p__payment(my_table, table_number, amount); // do not free this amount since it stores in the transition.
-	bool is_succeed = flush_file(my_table, "Payment successful.\n", "Payment unsuccessful.\n");
+	bool is_succeed = flush_file(my_table, "Payment successful.", "Payment unsuccessful.");
 	if (is_succeed == false) {
 		if (input_integer_question("1. Cancel order 2. Change payment method (1/2)?:", "Invalid input.", 1, 2) == 2) {
 			goto PAYMENT;
@@ -1958,14 +1949,15 @@ void order_food(table *my_table) {
 			}
 		}
 	}
+	RETURN_:
 	sheet_free(ordered_sheet);
 }
 
 ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 void main_menu(table *my_table) {
-	setjmp(JMP);
 	while (1) {
-		printf("\n1)  Order food\n2)  Admin section\n3)  Exit\n");
+		NL
+		printf("1)  Order food\n2)  Admin section\n3)  Exit\n");
 		int64_t option = input_integer_question("Option: ", "Unknown option.", 0, 3);
 		switch (option) {
 			case 1:
@@ -1980,12 +1972,20 @@ void main_menu(table *my_table) {
 	}
 }
 
-void sig_handler(int sig){
+void sig_handler(int sig) {
 	errno = SIGINT;
-	ERROR(1, "Received SIGINT signal, quiting the program...");
+	ERROR("Received SIGINT signal, quiting the program...");
 }
 
-int main(void) {
+int main(int argc, char *argv[]) {
+	if (argc != 1 && argc != 3) {
+		errno = -1;
+		ERROR("invalid params for program %s", argv[0]);
+	} else {
+		MENU_FILE_NAME = strcmp(argv[1], "DEFAULT") ? argv[1] : MENU_FILE_NAME;
+		TRANSITION_HISTORY_FILE_NAME = strcmp(argv[2], "DEFAULT") ? argv[2] : TRANSITION_HISTORY_FILE_NAME;
+	}
+
 	signal(SIGINT, sig_handler);
 	setbuf(stdout, 0); // workaround for Clion debugger when running in WSL.
 	table *my_table = new_table();
