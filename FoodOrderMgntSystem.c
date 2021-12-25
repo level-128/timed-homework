@@ -212,7 +212,7 @@ node *list_get_node(list *self, uint32_t index) {
 		return self->first_node;
 	}
 	if (index >= self->len || index < 0) {
-		ERROR("List out of index, list at %p has length %zu, but tries to index %ui", self, self->len, index);
+		ERROR("list index out of range, list at %p has length %zu, but tries to index %u", self, self->len, index);
 	}
 
 	size_t start_index;
@@ -1978,10 +1978,7 @@ void sig_handler(int sig) {
 }
 
 int main(int argc, char *argv[]) {
-	if (argc != 1 && argc != 3) {
-		errno = -1;
-		ERROR("invalid params for program %s", argv[0]);
-	} else {
+	if (argc == 3){
 		MENU_FILE_NAME = strcmp(argv[1], "DEFAULT") ? argv[1] : MENU_FILE_NAME;
 		TRANSITION_HISTORY_FILE_NAME = strcmp(argv[2], "DEFAULT") ? argv[2] : TRANSITION_HISTORY_FILE_NAME;
 	}
