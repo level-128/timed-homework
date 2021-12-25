@@ -1521,21 +1521,22 @@ void change_password(table *self) {
 
 void add_category(table *self) {
 	sheet *menu_sheet = table_get_sheet_by_name(self, L"MENU");
-	element *category_name = NULL;
+	ADD_CATEGORY:{};
 
-	ADD_CATEGORY:
-	ele_free(category_name);
-	category_name = ele_new_str_from_str(str_input("Enter a category name: "));
+	element *category_name = ele_new_str_from_str(str_input("Enter a category name: "));
 	if (len(category_name->value.string_) == 0) {
 		printf("Invalid input.\n");
+		ele_free(category_name);
 		goto ADD_CATEGORY;
 	}
 	if (len(category_name->value.string_) > 50) {
 		printf("Category name can’t be more than 50 characters.\n");
+		ele_free(category_name);
 		goto ADD_CATEGORY;
 	}
 	if (sheet_get_col_by_name(menu_sheet, category_name)) {
 		printf("The category you entered is already on the list.\n");
+		ele_free(category_name);
 		goto ADD_CATEGORY;
 	} else {
 		column *new_col = new_column();
