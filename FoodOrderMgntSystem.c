@@ -181,7 +181,7 @@ union void_s_to_wchar {
 } str_conv;
 
 union void_s_to_char {
-	 void *void_s;
+	 __attribute__((unused)) void *void_s;
 	 char char_;
 } void_s_to_char;
 
@@ -920,7 +920,7 @@ void sheet_pop_by_index(sheet *self, uint32_t index) {
 	sheet_pop(self, my_column);
 }
 
-void sheet_pop_by_name(sheet *self, element *index) {
+__attribute__((unused)) void sheet_pop_by_name(sheet *self, element *index) {
 	column *my_column = sheet_get_col_by_name(self, index);
 	sheet_pop(self, my_column);
 }
@@ -1291,31 +1291,6 @@ bool input_yn_question(char *message) {
 		}
 		str_free(input);
 		printf_l("Invalid input.");
-	}
-}
-
-wchar_t *
-input_option_question(char *message, char *error_message, int option_number, wchar_t *options[], bool print_options) {
-	string *input;
-	while (true) {
-		NL
-		printf("%s", message);
-		if (print_options) {
-			printf(" (%ls", options[0]);
-			for (int i = 1; i < option_number; i++) {
-				printf("/%ls", options[i]);
-			}
-			printf(")?: ");
-		}
-		input = str_input("");
-		for (int i = 0; i < option_number; i++) {
-			if (!str_cmpw(input, options[i])) {
-				str_free(input);
-				return options[i];
-			}
-		}
-		str_free(input);
-		printf_l(error_message);
 	}
 }
 
