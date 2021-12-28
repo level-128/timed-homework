@@ -1,0 +1,4 @@
+	"TRANSACTION_HISTORY","Table no.","Payment method","Card no.","Card holder's name","Amt.","Date","Time",0,
+"TRANSACTION_HISTORY",23,"Card","212121212","Smith",43.460000,"21/12/28","19/12/28",
+	"PASSWORD",0,
+"PASSWORD","admin",
