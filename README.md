@@ -15,7 +15,7 @@ history in a password protected Admin session.
 I implemented few basic data structures:
 
 - optimized single link list to store the categories and items. 
-- Unicode string (mutable) extended from link list with basic methods.
+- Unicode string (mutable) with reference count, extended from link list with basic methods.
 - Key-Value pair Hash table
 - Table structure which could search sub-sheets or columns using key or index.
 - A tiny runtime to perform dynamic type-check for values in .csv file
