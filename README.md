@@ -54,7 +54,7 @@ License version 2.0 with Exception:
     this purpose could remain proprietary or limit rights.
 
 ## compile:
-In University of Nottingham Ningbo, coursework are evaluating on an CentOS 7 server running GCC 9.x. 
+In University of Nottingham Ningbo, courseworks are evaluated on an CentOS 7 server running GCC 9.x. 
 The program should compile with no warnings and errors with following params:
 
     gcc -std=c99 -lm –Wall -g -fsanitize=leak FoodOrderMgntSystem.c -o FoodOrderMgntSystem
