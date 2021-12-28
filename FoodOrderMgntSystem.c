@@ -181,7 +181,7 @@ union void_s_to_wchar {
 } str_conv;
 
 union void_s_to_char {
-	 __attribute__((unused)) void *void_s;
+	 void *void_s;
 	 char char_;
 } void_s_to_char;
 
